@@ -49,91 +49,64 @@ Nexterm is an open-source server management software that allows you to:
 
 ## 🚀 Install
 
-You can install Nexterm by clicking [here](https://docs.nexterm.dev/installation).
+Nexterm Neo runs as an all-in-one Docker container. Install Docker Engine with the Docker Compose plugin, then create a `.env` file next to your `compose.yaml`:
 
-## 💻 Development
-
-### Prerequisites
-
--   Node.js 18+
--   Yarn
--   FlatBuffers compiler (`flatc`)
--   Docker (optional)
-
-Install FlatBuffers:
-
-| Platform | Command |
-|----------|---------|
-| macOS | `brew install flatbuffers` |
-| Ubuntu / Debian | `sudo apt install flatbuffers-compiler` |
-| Windows | `winget install Google.FlatBuffers` |
-
-### Local Setup
-
-#### Clone the repository
-
-```sh
-git clone https://github.com/gnmyt/Nexterm.git
-cd Nexterm
+```env
+ENCRYPTION_KEY=replace-this-with-a-generated-key
 ```
 
-#### Configure environment
+Generate a key with `openssl rand -hex 32` and put the result in `.env`. Keep this key safe and use the same key whenever you update or recreate the container.
 
-Create a local environment file:
+Create `compose.yaml`:
 
-```sh
-cp .env.example .env
+```yaml
+services:
+  nexterm:
+    image: ghcr.io/j-gaertig/nexterm-aio:development
+    container_name: nexterm
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    volumes:
+      - nexterm:/app/data
+
+volumes:
+  nexterm:
 ```
 
-Make sure `ENCRYPTION_KEY` is set in `.env`.
-
-You can generate a secure key using:
-
-| Platform | Command |
-|----------|---------|
-| macOS / Linux | `openssl rand -hex 32` |
-
-#### Install dependencies
+Make sure the `nexterm-aio` package on GitHub Container Registry is public, then start Nexterm:
 
 ```sh
-yarn install
-cd client && yarn install
-cd ..
+docker compose up -d
 ```
 
-#### Generate FlatBuffers schemas
+Open `http://<server-ip>:6989` in your browser. With host networking, Nexterm can access the host network directly, which is useful for connections to `localhost` and Wake-on-LAN.
+
+### Update an existing Nexterm installation
+
+Change only the `image` value in your existing Compose file:
+
+```yaml
+image: ghcr.io/j-gaertig/nexterm-aio:development
+```
+
+Keep your existing `/app/data` volume and `ENCRYPTION_KEY`. Pull the new image and recreate the Nexterm container:
 
 ```sh
-yarn schema:generate
+docker compose pull nexterm
+docker compose up -d nexterm
 ```
-
-This step is required before starting the development server.
-
-#### Start development mode
-
-```sh
-yarn dev
-```
-
-#### Start an engine
-
-The development server does not automatically start an engine. To connect to servers, an engine must be running separately:
-
-```sh
-yarn dev:engine
-```
-
-If using local engine registration, set `LOCAL_ENGINE_TOKEN` in the server environment and use the same value as `REGISTRATION_TOKEN` for the engine.
 
 ## 🔧 Configuration
 
 ### Docker Images
 
-| Image            | Description                                              |
-|------------------|----------------------------------------------------------|
-| `nexterm/aio`    | All-In-One — server, client, and engine bundled together |
-| `nexterm/server` | Server + web client only (requires external engine)      |
-| `nexterm/engine` | Engine only                                              |
+| Image                                 | Description                                              |
+|---------------------------------------|----------------------------------------------------------|
+| `ghcr.io/j-gaertig/nexterm-aio`       | All-In-One — server, client, and engine bundled together |
+| `ghcr.io/j-gaertig/nexterm-server`    | Server + web client only (requires external engine)      |
+| `ghcr.io/j-gaertig/nexterm-engine`    | Engine only                                              |
 
 The server listens on port 6989 by default. You can modify this behavior using environment variables:
 
