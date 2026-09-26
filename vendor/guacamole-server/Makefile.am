@@ -23,8 +23,6 @@
 # to you by the ASF under the Apache License, Version 2.0, as described above.
 #
 
-ACLOCAL_AMFLAGS = -I m4
-
 # Subprojects
 DIST_SUBDIRS =               \
     src/libguac              \

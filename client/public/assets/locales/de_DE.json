@@ -930,6 +930,10 @@
         "pasteidentitypassword": {
           "title": "Identitätskennwort einfügen",
           "description": "Füge das Passwort für die Identität der aktuellen SSH-Verbindung ein"
+        },
+        "savefile": {
+          "title": "Datei speichern",
+          "description": "Speichert die aktuelle Datei im Datei-Editor"
         }
       },
       "recorder": {
