@@ -435,6 +435,7 @@ class _TerminalRendererState extends State<TerminalRenderer> {
                           ],
                         ),
                       ),
+                    ),
                   ),
                   if (_showKeyboardToolbar) _buildKeyboardToolbar(),
                 ],
