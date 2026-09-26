@@ -51,8 +51,11 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   bool _ctrlPressed = false;
   bool _altPressed = false;
   bool _initialized = false;
+  final Map<String, Timer> _arrowRepeatTimers = {};
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 5;
+  static const Duration _arrowRepeatDelay = Duration(milliseconds: 400);
+  static const Duration _arrowRepeatInterval = Duration(milliseconds: 80);
 
   @override
   void initState() {
@@ -68,6 +71,7 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   }
 
   void _onFocusChanged() {
+    if (!_terminalFocusNode.hasFocus) _stopAllArrowRepeats();
     if (mounted) setState(() => _showKeyboardToolbar = _terminalFocusNode.hasFocus);
   }
 
@@ -115,6 +119,33 @@ class _TerminalRendererState extends State<TerminalRenderer> {
     return null;
   }
 
+  void _startArrowHold(String key) {
+    _stopArrowRepeat(key);
+    _sendSpecialKey(key);
+    _arrowRepeatTimers[key] = Timer(_arrowRepeatDelay, () => _repeatArrow(key));
+  }
+
+  void _repeatArrow(String key) {
+    if (!mounted || !_connected || !_terminalFocusNode.hasFocus) {
+      _stopArrowRepeat(key);
+      return;
+    }
+
+    _sendSpecialKey(key);
+    _arrowRepeatTimers[key] = Timer(_arrowRepeatInterval, () => _repeatArrow(key));
+  }
+
+  void _stopArrowRepeat(String key) {
+    _arrowRepeatTimers.remove(key)?.cancel();
+  }
+
+  void _stopAllArrowRepeats() {
+    for (final timer in _arrowRepeatTimers.values) {
+      timer.cancel();
+    }
+    _arrowRepeatTimers.clear();
+  }
+
   void _setupTerminal() {
     if (_initialized) return;
     _initialized = true;
@@ -141,11 +172,13 @@ class _TerminalRendererState extends State<TerminalRenderer> {
           }
         },
         onError: (error) {
+          _stopAllArrowRepeats();
           if (mounted) setState(() { _errorMessage = 'Connection error: $error'; _connected = false; });
           widget.session.isConnected = false;
           _attemptReconnect();
         },
         onDone: () {
+          _stopAllArrowRepeats();
           if (mounted) setState(() => _connected = false);
           widget.session.isConnected = false;
           _attemptReconnect();
@@ -170,6 +203,7 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleHardwareKey);
+    _stopAllArrowRepeats();
     _terminalFocusNode.removeListener(_onFocusChanged);
     _terminalFocusNode.dispose();
     super.dispose();
@@ -433,10 +467,10 @@ class _TerminalRendererState extends State<TerminalRenderer> {
         ];
       case ToolbarGroup.arrows:
         return [
-          _toolbarBtn('↑', onPressed: () => _sendSpecialKey('UP'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('↓', onPressed: () => _sendSpecialKey('DOWN'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('←', onPressed: () => _sendSpecialKey('LEFT'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('→', onPressed: () => _sendSpecialKey('RIGHT'), compact: true), const SizedBox(width: 16),
+          _toolbarBtn('↑', holdKey: 'UP', compact: true), const SizedBox(width: 8),
+          _toolbarBtn('↓', holdKey: 'DOWN', compact: true), const SizedBox(width: 8),
+          _toolbarBtn('←', holdKey: 'LEFT', compact: true), const SizedBox(width: 8),
+          _toolbarBtn('→', holdKey: 'RIGHT', compact: true), const SizedBox(width: 16),
         ];
       case ToolbarGroup.navigation:
         return [
@@ -455,14 +489,17 @@ class _TerminalRendererState extends State<TerminalRenderer> {
     }
   }
 
-  Widget _toolbarBtn(String label, {VoidCallback? onPressed, bool isToggle = false, bool isActive = false, bool compact = false}) {
+  Widget _toolbarBtn(String label, {VoidCallback? onPressed, String? holdKey, bool isToggle = false, bool isActive = false, bool compact = false}) {
     final theme = Theme.of(context);
     final bgColor = isActive ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest;
     final fgColor = isActive ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
     return Material(
       color: bgColor, borderRadius: BorderRadius.circular(12), elevation: isActive ? 2 : 0,
       child: InkWell(
-        onTap: onPressed ?? () => _sendSpecialKey(label),
+        onTap: holdKey == null ? onPressed ?? () => _sendSpecialKey(label) : () {},
+        onTapDown: holdKey == null ? null : (_) => _startArrowHold(holdKey),
+        onTapUp: holdKey == null ? null : (_) => _stopArrowRepeat(holdKey),
+        onTapCancel: holdKey == null ? null : () => _stopArrowRepeat(holdKey),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           constraints: BoxConstraints(minWidth: compact ? 44 : 56, minHeight: 44),

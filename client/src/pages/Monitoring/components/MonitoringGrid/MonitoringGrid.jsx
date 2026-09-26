@@ -47,12 +47,15 @@ export const MonitoringGrid = ({ servers, onServerSelect }) => {
                 { key: "vms", val: pveInfo ? `${pveInfo.runningVMs + pveInfo.runningLXC}/${pveInfo.vmCount + pveInfo.lxcCount}` : null, unit: "" },
             ];
         }
-        return [
+        const metrics = [
             { key: "cpuUsage", val: server.monitoring?.cpuUsage, unit: "%" },
             { key: "memoryUsage", val: server.monitoring?.memoryUsage, unit: "%" },
-            { key: "loadAverage", val: server.monitoring?.loadAverage?.[0]?.toFixed(2), unit: "" },
             { key: "processes", val: server.monitoring?.processes, unit: "" },
         ];
+        if (pveInfo?.platform !== "windows") {
+            metrics.splice(2, 0, { key: "loadAverage", val: server.monitoring?.loadAverage?.[0]?.toFixed(2), unit: "" });
+        }
+        return metrics;
     };
 
     return (
