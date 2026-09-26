@@ -22,7 +22,10 @@ const OPERATIONS = {
 
 const REFRESH_DEBOUNCE = 150;
 
-const joinPath = (...parts) => parts.join("/").replace(/\/+/g, "/");
+const joinPath = (...parts) => parts.filter(Boolean).reduce((path, part) => {
+    if (!path) return part;
+    return `${path.replace(/\/+$/, "")}/${part.replace(/^\/+/, "")}`;
+}, "");
 
 const createUploadStats = () => ({ uploaded: 0, failed: 0, sentBytes: 0, totalBytes: 0, firstError: null, lastName: "" });
 
@@ -79,6 +82,7 @@ export const FileRenderer = ({ session, disconnectFromServer, setOpenFileEditors
     const [uploadProgress, setUploadProgress] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
     const [directory, setDirectory] = useState("/");
+    const [rootPath, setRootPath] = useState("/");
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -256,6 +260,7 @@ export const FileRenderer = ({ session, disconnectFromServer, setOpenFileEditors
                     setConnectionError(null);
                     setCapabilities(payload?.capabilities ?? { shell: true, terminal: true });
                     reconnectAttemptsRef.current = 0;
+                    setRootPath(payload?.rootPath || "/");
                     if (payload?.path && payload.path !== directoryRef.current) {
                         skipNextPathSync.current = true;
                         setDirectory(payload.path);
@@ -345,8 +350,8 @@ export const FileRenderer = ({ session, disconnectFromServer, setOpenFileEditors
         } catch { return false; }
     }, [sendMessage, readyState]);
 
-    const createFile = (fileName) => sendOperation(OPERATIONS.CREATE_FILE, { path: `${directory}/${fileName}` });
-    const createFolder = (folderName) => sendOperation(OPERATIONS.CREATE_FOLDER, { path: `${directory}/${folderName}` });
+    const createFile = (fileName) => sendOperation(OPERATIONS.CREATE_FILE, { path: joinPath(directory, fileName) });
+    const createFolder = (folderName) => sendOperation(OPERATIONS.CREATE_FOLDER, { path: joinPath(directory, folderName) });
     const listFiles = useCallback((silent = false) => { if (!silent) setLoading(true); setError(null); sendOperation(OPERATIONS.LIST_FILES, { path: directory }); }, [directory, sendOperation]);
     const scheduleRefresh = () => {
         clearTimeout(refreshTimerRef.current);
@@ -435,7 +440,7 @@ export const FileRenderer = ({ session, disconnectFromServer, setOpenFileEditors
                 </div>
             </div>
             <div className="file-manager">
-                <ActionBar path={directory} updatePath={changeDirectory} createFile={() => fileListRef.current?.startCreateFile()}
+                <ActionBar path={directory} rootPath={rootPath} updatePath={changeDirectory} createFile={() => fileListRef.current?.startCreateFile()}
                     createFolder={() => fileListRef.current?.startCreateFolder()} uploadFile={uploadFile} uploadFolder={uploadFolder}
                     refreshFiles={() => listFiles(true)} goBack={goBack} goForward={goForward} historyIndex={historyIndex}
                     historyLength={history.length} viewMode={viewMode} setViewMode={setViewMode} 
