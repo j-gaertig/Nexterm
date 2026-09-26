@@ -9,7 +9,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   build-apk:
@@ -34,7 +33,7 @@ jobs:
       - name: Reserve next Android version code
         id: version
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ANDROID_VARIABLES_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
