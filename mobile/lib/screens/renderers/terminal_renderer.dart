@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_material_design_icons/flutter_material_design_icons.dart';
 import 'package:web_socket_channel/io.dart';
@@ -10,6 +11,7 @@ import 'package:xterm/xterm.dart';
 import '../../services/session_manager.dart';
 import '../../utils/ai_manager.dart';
 import '../../utils/snippet_manager.dart';
+import '../../utils/terminal_key_input.dart';
 import '../../utils/terminal_settings.dart';
 import '../widgets/ai_assistant_sheet.dart';
 import '../widgets/connection_loader.dart';
@@ -52,14 +54,18 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   bool _ctrlPressed = false;
   bool _altPressed = false;
   bool _initialized = false;
+  final Map<String, Timer> _arrowRepeatTimers = {};
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 5;
+  static const Duration _arrowRepeatDelay = Duration(milliseconds: 400);
+  static const Duration _arrowRepeatInterval = Duration(milliseconds: 80);
 
   @override
   void initState() {
     super.initState();
     _terminal.addListener(_onTerminalChanged);
     _terminalFocusNode.addListener(_onFocusChanged);
+    HardwareKeyboard.instance.addHandler(_handleHardwareKey);
     widget.session.showSnippets = _showSnippets;
     widget.session.showAI = _showAISheet;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -71,7 +77,79 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   void _onTerminalChanged() => _cursorRevision.value++;
 
   void _onFocusChanged() {
+    if (!_terminalFocusNode.hasFocus) _stopAllArrowRepeats();
     if (mounted) setState(() => _showKeyboardToolbar = _terminalFocusNode.hasFocus);
+  }
+
+  bool _handleHardwareKey(KeyEvent event) {
+    if (!mounted ||
+        !_terminalFocusNode.hasFocus ||
+        (!_ctrlPressed && !_altPressed) ||
+        event is! KeyDownEvent) {
+      return false;
+    }
+
+    final key = _hardwareKeyName(event);
+    if (key == null) return false;
+    _sendTerminalKey(key);
+    return true;
+  }
+
+  String? _hardwareKeyName(KeyDownEvent event) {
+    final character = event.character;
+    if (character != null && character.isNotEmpty) return character;
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) return 'ESC';
+    if (key == LogicalKeyboardKey.tab) return 'TAB';
+    if (key == LogicalKeyboardKey.arrowUp) return 'UP';
+    if (key == LogicalKeyboardKey.arrowDown) return 'DOWN';
+    if (key == LogicalKeyboardKey.arrowLeft) return 'LEFT';
+    if (key == LogicalKeyboardKey.arrowRight) return 'RIGHT';
+    if (key == LogicalKeyboardKey.home) return 'HOME';
+    if (key == LogicalKeyboardKey.end) return 'END';
+    if (key == LogicalKeyboardKey.pageUp) return 'PGUP';
+    if (key == LogicalKeyboardKey.pageDown) return 'PGDN';
+    if (key == LogicalKeyboardKey.f1) return 'F1';
+    if (key == LogicalKeyboardKey.f2) return 'F2';
+    if (key == LogicalKeyboardKey.f3) return 'F3';
+    if (key == LogicalKeyboardKey.f4) return 'F4';
+    if (key == LogicalKeyboardKey.f5) return 'F5';
+    if (key == LogicalKeyboardKey.f6) return 'F6';
+    if (key == LogicalKeyboardKey.f7) return 'F7';
+    if (key == LogicalKeyboardKey.f8) return 'F8';
+    if (key == LogicalKeyboardKey.f9) return 'F9';
+    if (key == LogicalKeyboardKey.f10) return 'F10';
+    if (key == LogicalKeyboardKey.f11) return 'F11';
+    if (key == LogicalKeyboardKey.f12) return 'F12';
+    return null;
+  }
+
+  void _startArrowHold(String key) {
+    _stopArrowRepeat(key);
+    _sendSpecialKey(key);
+    _arrowRepeatTimers[key] = Timer(_arrowRepeatDelay, () => _repeatArrow(key));
+  }
+
+  void _repeatArrow(String key) {
+    if (!mounted || !_connected || !_terminalFocusNode.hasFocus) {
+      _stopArrowRepeat(key);
+      return;
+    }
+
+    _sendSpecialKey(key);
+    _arrowRepeatTimers[key] = Timer(_arrowRepeatInterval, () => _repeatArrow(key));
+  }
+
+  void _stopArrowRepeat(String key) {
+    _arrowRepeatTimers.remove(key)?.cancel();
+  }
+
+  void _stopAllArrowRepeats() {
+    for (final timer in _arrowRepeatTimers.values) {
+      timer.cancel();
+    }
+    _arrowRepeatTimers.clear();
   }
 
   void _setupTerminal() {
@@ -80,21 +158,7 @@ class _TerminalRendererState extends State<TerminalRenderer> {
 
     _terminal.onOutput = (data) {
       if (!mounted || _channel == null) return;
-      String processed = data;
-      if ((_ctrlPressed || _altPressed) && data.length == 1) {
-        final code = data.codeUnitAt(0);
-        if (_ctrlPressed) {
-          if (code >= 65 && code <= 90) {
-            processed = String.fromCharCode(code - 64);
-          } else if (code >= 97 && code <= 122) {
-            processed = String.fromCharCode(code - 96);
-          }
-        } else if (_altPressed) {
-          processed = '\x1b$data';
-        }
-        if (mounted) setState(() { _ctrlPressed = false; _altPressed = false; });
-      }
-      _channel?.sink.add(processed);
+      _sendTerminalText(data);
     };
 
     _terminal.onResize = (w, h, _, __) {
@@ -114,11 +178,13 @@ class _TerminalRendererState extends State<TerminalRenderer> {
           }
         },
         onError: (error) {
+          _stopAllArrowRepeats();
           if (mounted) setState(() { _errorMessage = 'Connection error: $error'; _connected = false; });
           widget.session.isConnected = false;
           _attemptReconnect();
         },
         onDone: () {
+          _stopAllArrowRepeats();
           if (mounted) setState(() => _connected = false);
           widget.session.isConnected = false;
           _attemptReconnect();
@@ -144,6 +210,8 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   void dispose() {
     _terminal.removeListener(_onTerminalChanged);
     _cursorRevision.dispose();
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKey);
+    _stopAllArrowRepeats();
     _terminalFocusNode.removeListener(_onFocusChanged);
     _terminalFocusNode.dispose();
     super.dispose();
@@ -182,50 +250,45 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   }
 
   void _sendSpecialKey(String key) {
-    String seq = '';
     switch (key) {
       case 'CTRL': if (mounted) setState(() => _ctrlPressed = !_ctrlPressed); return;
       case 'ALT': if (mounted) setState(() => _altPressed = !_altPressed); return;
-      case 'ESC': seq = '\x1b'; break;
-      case 'TAB': seq = '\t'; break;
-      case 'UP': seq = '\x1b[A'; break;
-      case 'DOWN': seq = '\x1b[B'; break;
-      case 'LEFT': seq = '\x1b[D'; break;
-      case 'RIGHT': seq = '\x1b[C'; break;
-      case 'HOME': seq = '\x1b[H'; break;
-      case 'END': seq = '\x1b[F'; break;
-      case 'PGUP': seq = '\x1b[5~'; break;
-      case 'PGDN': seq = '\x1b[6~'; break;
-      default:
-        if (key.length == 1) {
-          final code = key.codeUnitAt(0);
-          if (_ctrlPressed) {
-            seq = code >= 65 && code <= 90
-                ? String.fromCharCode(code - 64)
-                : code >= 97 && code <= 122
-                    ? String.fromCharCode(code - 96)
-                    : key;
-          } else if (_altPressed) {
-            seq = '\x1b$key';
-          } else {
-            seq = key;
-          }
-        }
-    }
-    if (seq.isNotEmpty) {
-      _channel?.sink.add(seq);
-      if (mounted) setState(() { _ctrlPressed = false; _altPressed = false; });
+      default: _sendTerminalKey(key); return;
     }
   }
 
   void _sendFunctionKey(int n) {
-    const fnKeys = <int, String>{
-      1: '\x1bOP', 2: '\x1bOQ', 3: '\x1bOR', 4: '\x1bOS',
-      5: '\x1b[15~', 6: '\x1b[17~', 7: '\x1b[18~', 8: '\x1b[19~',
-      9: '\x1b[20~', 10: '\x1b[21~', 11: '\x1b[23~', 12: '\x1b[24~',
-    };
-    final seq = fnKeys[n];
-    if (seq != null) _channel?.sink.add(seq);
+    _sendTerminalKey('F$n');
+  }
+
+  void _sendTerminalText(String text) {
+    final ctrl = _ctrlPressed;
+    final alt = _altPressed;
+    _channel?.sink.add(TerminalKeyInput.applyText(text, ctrl: ctrl, alt: alt));
+    _clearModifiers();
+  }
+
+  void _sendTerminalKey(String key, {bool forceCtrl = false}) {
+    final ctrl = forceCtrl || _ctrlPressed;
+    final alt = _altPressed;
+    final data = TerminalKeyInput.applyKey(key, ctrl: ctrl, alt: alt);
+    if (data.isEmpty) return;
+    _channel?.sink.add(data);
+    _clearModifiers();
+  }
+
+  void _clearModifiers() {
+    if (_ctrlPressed || _altPressed) {
+      if (mounted) {
+        setState(() {
+          _ctrlPressed = false;
+          _altPressed = false;
+        });
+      } else {
+        _ctrlPressed = false;
+        _altPressed = false;
+      }
+    }
   }
 
   void _showAISheet() {
@@ -433,16 +496,16 @@ class _TerminalRendererState extends State<TerminalRenderer> {
         ];
       case ToolbarGroup.signals:
         return [
-          _toolbarBtn('^C', onPressed: () => _channel?.sink.add('\x03'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('^Z', onPressed: () => _channel?.sink.add('\x1a'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('^D', onPressed: () => _channel?.sink.add('\x04'), compact: true), const SizedBox(width: 16),
+          _toolbarBtn('^C', onPressed: () => _sendTerminalKey('c', forceCtrl: true), compact: true), const SizedBox(width: 8),
+          _toolbarBtn('^Z', onPressed: () => _sendTerminalKey('z', forceCtrl: true), compact: true), const SizedBox(width: 8),
+          _toolbarBtn('^D', onPressed: () => _sendTerminalKey('d', forceCtrl: true), compact: true), const SizedBox(width: 16),
         ];
       case ToolbarGroup.arrows:
         return [
-          _toolbarBtn('↑', onPressed: () => _sendSpecialKey('UP'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('↓', onPressed: () => _sendSpecialKey('DOWN'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('←', onPressed: () => _sendSpecialKey('LEFT'), compact: true), const SizedBox(width: 8),
-          _toolbarBtn('→', onPressed: () => _sendSpecialKey('RIGHT'), compact: true), const SizedBox(width: 16),
+          _toolbarBtn('↑', holdKey: 'UP', compact: true), const SizedBox(width: 8),
+          _toolbarBtn('↓', holdKey: 'DOWN', compact: true), const SizedBox(width: 8),
+          _toolbarBtn('←', holdKey: 'LEFT', compact: true), const SizedBox(width: 8),
+          _toolbarBtn('→', holdKey: 'RIGHT', compact: true), const SizedBox(width: 16),
         ];
       case ToolbarGroup.navigation:
         return [
@@ -461,14 +524,17 @@ class _TerminalRendererState extends State<TerminalRenderer> {
     }
   }
 
-  Widget _toolbarBtn(String label, {VoidCallback? onPressed, bool isToggle = false, bool isActive = false, bool compact = false}) {
+  Widget _toolbarBtn(String label, {VoidCallback? onPressed, String? holdKey, bool isToggle = false, bool isActive = false, bool compact = false}) {
     final theme = Theme.of(context);
     final bgColor = isActive ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest;
     final fgColor = isActive ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
     return Material(
       color: bgColor, borderRadius: BorderRadius.circular(12), elevation: isActive ? 2 : 0,
       child: InkWell(
-        onTap: onPressed ?? () => _sendSpecialKey(label),
+        onTap: holdKey == null ? onPressed ?? () => _sendSpecialKey(label) : () {},
+        onTapDown: holdKey == null ? null : (_) => _startArrowHold(holdKey),
+        onTapUp: holdKey == null ? null : (_) => _stopArrowRepeat(holdKey),
+        onTapCancel: holdKey == null ? null : () => _stopArrowRepeat(holdKey),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           constraints: BoxConstraints(minWidth: compact ? 44 : 56, minHeight: 44),

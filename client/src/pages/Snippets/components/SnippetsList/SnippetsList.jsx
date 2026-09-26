@@ -1,5 +1,5 @@
 import "./styles.sass";
-import { mdiPencil, mdiTrashCan, mdiChevronLeft, mdiChevronRight, mdiCloudDownloadOutline, mdiLinux } from "@mdi/js";
+import { mdiPencil, mdiTrashCan, mdiChevronLeft, mdiChevronRight, mdiCloudDownloadOutline, mdiLinux, mdiMicrosoftWindows } from "@mdi/js";
 import Icon from "@mdi/react";
 import { useSnippets } from "@/common/contexts/SnippetContext.jsx";
 import { deleteRequest, patchRequest } from "@/common/utils/RequestUtil.js";
@@ -23,7 +23,7 @@ const SnippetItem = ({ snippet, onEdit, onDelete, isReadOnly, onReposition, t })
                     <div className="snippet-badges">
                         {osFilter.length > 0 && (
                             <span className="os-badge" title={osFilter.join(", ")}>
-                                <Icon path={mdiLinux} size={0.5} />
+                                <Icon path={osFilter.includes("Windows") ? mdiMicrosoftWindows : mdiLinux} size={0.5} />
                                 {osFilter.length === 1 ? osFilter[0] : `${osFilter.length} OS`}
                             </span>
                         )}

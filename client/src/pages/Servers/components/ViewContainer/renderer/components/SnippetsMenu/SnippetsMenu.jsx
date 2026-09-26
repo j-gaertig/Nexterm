@@ -2,9 +2,10 @@ import { useSnippets } from "@/common/contexts/SnippetContext.jsx";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import "./styles.sass";
-import { mdiMagnify, mdiCloudDownloadOutline, mdiLinux } from "@mdi/js";
+import { mdiMagnify, mdiCloudDownloadOutline, mdiLinux, mdiMicrosoftWindows } from "@mdi/js";
 import Icon from "@mdi/react";
-import { parseOsFilter, matchesOsFilter, normalizeOsName } from "@/common/utils/osUtils.js";
+import { getRequest } from "@/common/utils/RequestUtil.js";
+import { parseOsFilter, matchesOsFilter, normalizeOsName, normalizeOsNameFromIcon } from "@/common/utils/osUtils.js";
 
 export const SnippetsMenu = ({ onSelect, onClose, visible, activeSession }) => {
     const { allSnippets, sourceSnippets } = useSnippets();
@@ -12,12 +13,27 @@ export const SnippetsMenu = ({ onSelect, onClose, visible, activeSession }) => {
     const [highlightedIndex, setHighlightedIndex] = useState(-1);
     const [isPositioned, setIsPositioned] = useState(false);
     const [isVisible, setIsVisible] = useState(false);
+    const [detectedOsName, setDetectedOsName] = useState(null);
     const searchRef = useRef(null);
     const menuRef = useRef(null);
     const snippetRefs = useRef([]);
 
-    const serverOsName = normalizeOsName(activeSession?.osName);
+    const serverOsName = normalizeOsName(detectedOsName) || normalizeOsName(activeSession?.osName) || normalizeOsNameFromIcon(activeSession?.server?.icon);
     const isPveEntry = activeSession?.server?.type?.startsWith('pve-');
+
+    useEffect(() => {
+        const serverId = activeSession?.server?.id;
+        if (!visible || !serverId || isPveEntry) {
+            setDetectedOsName(null);
+            return;
+        }
+        setDetectedOsName(null);
+        let current = true;
+        getRequest(`monitoring/${serverId}`)
+            .then(data => { if (current) setDetectedOsName(normalizeOsName(data?.latest?.osInfo?.name)); })
+            .catch(() => { if (current) setDetectedOsName(null); });
+        return () => { current = false; };
+    }, [visible, activeSession?.server?.id, isPveEntry]);
 
     const availableSnippets = useMemo(() => {
         const userSnippets = allSnippets || [];
@@ -189,7 +205,7 @@ export const SnippetsMenu = ({ onSelect, onClose, visible, activeSession }) => {
                                                 <div className="snippets-menu__item-badges">
                                                     {osFilter.length > 0 && (
                                                         <span className="snippets-menu__os-badge" title={osFilter.join(", ")}>
-                                                            <Icon path={mdiLinux} size={0.5} />
+                                                            <Icon path={osFilter.includes("Windows") ? mdiMicrosoftWindows : mdiLinux} size={0.5} />
                                                             {osFilter.length === 1 ? osFilter[0] : `${osFilter.length} OS`}
                                                         </span>
                                                     )}
