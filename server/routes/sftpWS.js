@@ -41,9 +41,21 @@ const sendError = (ws, msg) => sendResult(ws, OP.ERROR, { message: msg });
 const requirePath = (p) => { if (!p?.path) throw new Error("Invalid path"); };
 const requirePaths = (p) => { if (!p?.path || !p?.newPath) throw new Error("Invalid paths"); };
 const requireMultiPaths = (p) => { if (!p?.sources?.length || !p?.destination) throw new Error("Invalid paths"); };
+const SFTP_PATH_RESOLUTION_TIMEOUT_MS = 5000;
+const resolveDirectory = (sftp, path) => new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("SFTP path resolution timed out")), SFTP_PATH_RESOLUTION_TIMEOUT_MS);
+    Promise.resolve().then(() => sftp.realpath(path)).then(
+        (result) => { clearTimeout(timeout); resolve(result); },
+        (err) => { clearTimeout(timeout); reject(err); },
+    );
+});
 
 const SHELL_LESS_PROTOCOLS = new Set(["ftp", "ftps"]);
 const TERMINAL_LESS_PROTOCOLS = new Set(["sftp", "ftp", "ftps"]);
+
+const isSftpEntry = (entry) => ["sftp", "ssh"].includes(
+    entry.type === "server" ? entry.config?.protocol : entry.type
+);
 
 const getCapabilities = (entry) => {
     const protocol = entry.type === "server" ? entry.config?.protocol : entry.type;
@@ -213,8 +225,29 @@ module.exports = async (ws, req) => {
         sftpClient.on("close", onSftpClose);
 
         const capabilities = getCapabilities(entry);
-        const storedPath = SessionManager.getSftpPath(sessionId);
-        sendResult(ws, OP.READY, { path: storedPath, capabilities });
+        let storedPath = SessionManager.getSftpPath(sessionId);
+        let rootPath = "/";
+        if (isSftpEntry(entry)) {
+            const [resolvedRoot, home] = await Promise.all([
+                resolveDirectory(sftpClient, "/").catch((err) => {
+                    logger.debug("Failed to resolve SFTP root; using slash", { sessionId, error: err.message });
+                    return null;
+                }),
+                storedPath ? Promise.resolve(null) : resolveDirectory(sftpClient, ".").catch((err) => {
+                    logger.debug("Failed to resolve SFTP home; using root", { sessionId, error: err.message });
+                    return null;
+                }),
+            ]);
+            if (resolvedRoot?.path && resolvedRoot.isDirectory) rootPath = resolvedRoot.path;
+
+            if (!storedPath) {
+                if (home?.path && home.isDirectory) storedPath = home.path;
+                storedPath ||= rootPath;
+                SessionManager.setSftpPath(sessionId, storedPath);
+            }
+        }
+        storedPath ||= rootPath;
+        sendResult(ws, OP.READY, { path: storedPath, rootPath, capabilities });
 
         const logAudit = (action, resource, details) => {
             createAuditLog({ accountId: user.id, organizationId: entry.organizationId, action, resource, details, ipAddress, userAgent });

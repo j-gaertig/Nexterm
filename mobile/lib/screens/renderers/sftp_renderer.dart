@@ -26,6 +26,7 @@ class _SftpOps {
   static const int deleteFolder = 0x7;
   static const int renameFile = 0x8;
   static const int error = 0x9;
+  static const int pathSync = 0x12;
 }
 
 class SftpRenderer extends StatefulWidget {
@@ -51,7 +52,8 @@ class SftpRenderer extends StatefulWidget {
 class _SftpRendererState extends State<SftpRenderer> {
   List<SftpEntry> _entries = [];
   String _currentPath = '/';
-  final List<String> _history = ['/'];
+  String _rootPath = '/';
+  List<String> _history = ['/'];
   int _historyIndex = 0;
   bool _loading = true;
   bool _connected = false;
@@ -65,12 +67,38 @@ class _SftpRendererState extends State<SftpRenderer> {
 
   String get _sessionId => widget.session.sessionId;
 
-  String _remotePath(String name) =>
-      _currentPath == '/' ? '/$name' : '$_currentPath/$name';
+  String _normalizeRoot(String path) =>
+      path == '/' || RegExp(r'^[a-z]:/$', caseSensitive: false).hasMatch(path)
+          ? path
+          : path.replaceFirst(RegExp(r'/$'), '');
+
+  List<String> _pathSegments([String? path]) {
+    final value = path ?? _currentPath;
+    final root = _normalizeRoot(_rootPath);
+    final prefix = root.endsWith('/') ? root : '$root/';
+    final relative = root != '/' && (value == root || value.startsWith(prefix))
+        ? value.substring(root.length).replaceFirst(RegExp(r'^/'), '')
+        : value;
+    return relative.split('/').where((part) => part.isNotEmpty).toList();
+  }
+
+  String _joinPath(List<String> segments) {
+    final root = _normalizeRoot(_rootPath);
+    if (segments.isEmpty) return root;
+    final prefix = root == '/' ? '' : root.endsWith('/') ? root : '$root/';
+    return '$prefix${segments.join('/')}';
+  }
+
+  String _remotePath(String name) {
+    final base = _currentPath.endsWith('/') ? _currentPath : '$_currentPath/';
+    return '$base$name';
+  }
 
   @override
   void initState() {
     super.initState();
+    _currentPath = widget.session.sftpPath ?? '/';
+    _rootPath = widget.session.sftpRootPath ?? '/';
     _setupConnection();
   }
 
@@ -164,10 +192,25 @@ class _SftpRendererState extends State<SftpRenderer> {
 
     switch (operation) {
       case _SftpOps.ready:
-        if (mounted) setState(() => _connected = true);
+        Map<String, dynamic> ready = {};
+        try {
+          ready = json.decode(jsonPayload) as Map<String, dynamic>;
+        } catch (_) {}
+        if (mounted) {
+          setState(() {
+            _connected = true;
+            _rootPath = ready['rootPath'] as String? ?? '/';
+            final initialPath = ready['path'] as String? ?? _rootPath;
+            _currentPath = initialPath;
+            widget.session.sftpPath = initialPath;
+            widget.session.sftpRootPath = _rootPath;
+            _history = [initialPath];
+            _historyIndex = 0;
+          });
+        }
         widget.session.isConnected = true;
         _reconnectAttempts = 0;
-        _listDirectory(_currentPath);
+        _listDirectory(ready['path'] as String? ?? _rootPath);
         break;
       case _SftpOps.listFiles:
         _handleDirectoryListed(jsonPayload);
@@ -189,6 +232,21 @@ class _SftpRendererState extends State<SftpRenderer> {
             });
           }
         }
+        break;
+      case _SftpOps.pathSync:
+        try {
+          final payload = json.decode(jsonPayload) as Map<String, dynamic>;
+          final path = payload['path'] as String?;
+          if (path != null && path != _currentPath && mounted) {
+            setState(() {
+              _currentPath = path;
+              widget.session.sftpPath = path;
+              _history = [..._history.take(_historyIndex + 1), path];
+              _historyIndex = _history.length - 1;
+            });
+            _listDirectory(path);
+          }
+        } catch (_) {}
         break;
       default:
         _listDirectory(_currentPath);
@@ -250,6 +308,7 @@ class _SftpRendererState extends State<SftpRenderer> {
   void _navigateTo(String path) {
     setState(() {
       _currentPath = path;
+      widget.session.sftpPath = path;
       _errorMessage = null;
       if (_historyIndex < _history.length - 1) {
         _history.removeRange(_historyIndex + 1, _history.length);
@@ -258,6 +317,7 @@ class _SftpRendererState extends State<SftpRenderer> {
       _historyIndex = _history.length - 1;
     });
     _listDirectory(path);
+    _sendOperation(_SftpOps.pathSync, {'path': path});
   }
 
   void _goBack() {
@@ -265,16 +325,17 @@ class _SftpRendererState extends State<SftpRenderer> {
       _historyIndex--;
       final path = _history[_historyIndex];
       setState(() => _currentPath = path);
+      widget.session.sftpPath = path;
       _listDirectory(path);
+      _sendOperation(_SftpOps.pathSync, {'path': path});
     }
   }
 
   void _goUp() {
-    if (_currentPath == '/') return;
-    final parts = _currentPath.split('/');
+    final parts = _pathSegments();
+    if (parts.isEmpty) return;
     parts.removeLast();
-    final parent = parts.isEmpty ? '/' : parts.join('/');
-    _navigateTo(parent.isEmpty ? '/' : parent);
+    _navigateTo(_joinPath(parts));
   }
 
   void _onEntryTap(SftpEntry entry, int index) {
@@ -290,9 +351,7 @@ class _SftpRendererState extends State<SftpRenderer> {
       return;
     }
     if (entry.isDir) {
-      final newPath = _currentPath == '/'
-          ? '/${entry.name}'
-          : '$_currentPath/${entry.name}';
+      final newPath = _remotePath(entry.name);
       _navigateTo(newPath);
     }
   }
@@ -697,7 +756,7 @@ class _SftpRendererState extends State<SftpRenderer> {
 
   Widget _buildPathBar() {
     final theme = Theme.of(context);
-    final segments = _currentPath.split('/').where((s) => s.isNotEmpty).toList();
+    final segments = _pathSegments();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -717,7 +776,7 @@ class _SftpRendererState extends State<SftpRenderer> {
           ),
           IconButton(
             icon: Icon(MdiIcons.arrowUp, size: 20),
-            onPressed: _currentPath != '/' ? _goUp : null,
+            onPressed: segments.isNotEmpty ? _goUp : null,
             visualDensity: VisualDensity.compact,
             tooltip: 'Up',
           ),
@@ -728,12 +787,12 @@ class _SftpRendererState extends State<SftpRenderer> {
               reverse: true,
               child: Row(
                 children: [
-                  _buildBreadcrumb('/', '/'),
+                  _buildBreadcrumb('/', _rootPath),
                   for (int i = 0; i < segments.length; i++) ...[
                     Icon(MdiIcons.chevronRight, size: 16, color: theme.colorScheme.outline),
                     _buildBreadcrumb(
                       segments[i],
-                      '/${segments.sublist(0, i + 1).join('/')}',
+                      _joinPath(segments.sublist(0, i + 1)),
                     ),
                   ],
                 ],

@@ -19,6 +19,8 @@ class AppSession {
   final ConnectionType type;
   bool isConnected;
   String? error;
+  String? sftpPath;
+  String? sftpRootPath;
 
   GuacClient? guacClient;
   GuacWebSocketTunnel? guacTunnel;

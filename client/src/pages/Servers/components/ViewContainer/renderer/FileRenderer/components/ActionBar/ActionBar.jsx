@@ -23,6 +23,7 @@ import { usePreferences } from "@/common/contexts/PreferencesContext.jsx";
 
 export const ActionBar = ({
                               path,
+                              rootPath = "/",
                               updatePath,
                               createFile,
                               createFolder,
@@ -67,17 +68,30 @@ export const ActionBar = ({
 
     const [dropTarget, setDropTarget] = useState(null);
 
-    const getPathArray = () => path.split("/").filter(Boolean);
+    const normalizeRoot = (value) => value === "/" || /^[a-z]:\/$/i.test(value) ? value : value.replace(/\/$/, "");
+    const joinRoot = (segments) => {
+        const root = normalizeRoot(rootPath);
+        if (!segments.length) return root;
+        const prefix = root === "/" ? "" : root.endsWith("/") ? root : `${root}/`;
+        return `${prefix}${segments.join("/")}` || "/";
+    };
+    const getPathArray = () => {
+        const root = normalizeRoot(rootPath);
+        const relative = root !== "/" && (path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`))
+            ? path.slice(root.length).replace(/^\//, "")
+            : path;
+        return relative.split("/").filter(Boolean);
+    };
 
     const goUp = () => {
         const pathArray = getPathArray();
         pathArray.pop();
-        updatePath(pathArray.length ? `/${pathArray.join("/")}` : "/");
+        updatePath(joinRoot(pathArray));
     };
 
     const navigate = (displayIndex, isTruncated = false, originalIndex = null) => {
         const pathArray = getPathArray();
-        const target = `/${pathArray.slice(0, (isTruncated ? originalIndex : displayIndex) + 1).join("/")}`;
+        const target = joinRoot(pathArray.slice(0, (isTruncated ? originalIndex : displayIndex) + 1));
         target === path ? refreshFiles?.() : updatePath(target);
     };
 
@@ -204,8 +218,12 @@ export const ActionBar = ({
 
     const submitPath = () => {
         let newPath = editPath.trim();
-        if (!newPath.startsWith("/")) newPath = "/" + newPath;
-        if (newPath.length > 1 && newPath.endsWith("/")) newPath = newPath.slice(0, -1);
+        if (!newPath.startsWith("/") && !/^[a-z]:[\\/]/i.test(newPath)) {
+            const root = normalizeRoot(rootPath);
+            const prefix = root === "/" ? "" : root.endsWith("/") ? root : `${root}/`;
+            newPath = `${prefix}${newPath}` || "/";
+        }
+        if (newPath.length > 1 && newPath.endsWith("/") && !/^[a-z]:\/$/i.test(newPath)) newPath = newPath.slice(0, -1);
         updatePath(newPath);
         resetInputState();
     };
@@ -285,20 +303,21 @@ export const ActionBar = ({
     const renderBreadcrumbs = () => {
         const { parts, showEllipsis, ellipsisIndex, originalLength } = getTruncatedPathArray();
         const fullArray = getPathArray();
+        const root = normalizeRoot(rootPath);
 
         return (
             <>
                 <div 
-                    className={`path-part-divider root-drop ${dropTarget === "/" ? "drop-target" : ""}`}
-                    onClick={(e) => { e.stopPropagation(); path === "/" ? refreshFiles?.() : updatePath("/"); }}
-                    onDragOver={(e) => handlePathDragOver(e, "/")}
+                    className={`path-part-divider root-drop ${dropTarget === root ? "drop-target" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); path === root ? refreshFiles?.() : updatePath(root); }}
+                    onDragOver={(e) => handlePathDragOver(e, root)}
                     onDragLeave={handlePathDragLeave}
-                    onDrop={(e) => handlePathDrop(e, "/")}
+                    onDrop={(e) => handlePathDrop(e, root)}
                 >/
                 </div>
                 {parts.map((part, i) => {
                     const originalIndex = showEllipsis ? (i === 0 ? 0 : fullArray.length - (parts.length - i)) : i;
-                    const targetPath = `/${fullArray.slice(0, originalIndex + 1).join("/")}`;
+                    const targetPath = joinRoot(fullArray.slice(0, originalIndex + 1));
                     const isDropping = dropTarget === targetPath;
 
                     return (
@@ -333,7 +352,7 @@ export const ActionBar = ({
             <Icon path={mdiChevronLeft} onClick={goBack} className={historyIndex === 0 ? " nav-disabled" : ""} />
             <Icon path={mdiChevronRight} onClick={goForward}
                   className={historyIndex === historyLength - 1 ? " nav-disabled" : ""} />
-            <Icon path={mdiChevronUp} onClick={goUp} className={path === "/" ? " nav-disabled" : ""} />
+            <Icon path={mdiChevronUp} onClick={goUp} className={normalizeRoot(path) === normalizeRoot(rootPath) ? " nav-disabled" : ""} />
 
             <div className="address-bar" onClick={() => setIsEditing(true)}>
                 {isEditing ? (
