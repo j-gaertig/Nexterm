@@ -32,6 +32,10 @@
 	<string>Photo library access is needed to select and upload files to your servers.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access is needed for voice-to-command AI input.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Speech recognition is used to convert voice commands to terminal commands via AI.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -27,7 +27,7 @@ dependencies:
     path: packages/guacamole_common_dart
   file_picker: ^8.0.0
   path_provider: ^2.1.5
-  share_plus: ^12.0.2
+  flutter_file_dialog: ^3.3.3
   open_filex: ^4.6.0
   mobile_scanner: ^7.2.0
   gpt_markdown: ^1.0.19
@@ -52,5 +52,5 @@ flutter_launcher_icons:
   remove_alpha_ios: true
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "favicon.png"
-  min_sdk_android: 21
+  min_sdk_android: 24
   adaptive_icon_padding: 10
