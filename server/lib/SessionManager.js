@@ -4,6 +4,7 @@ const logger = require("../utils/logger");
 const AuditLog = require("../models/AuditLog");
 const { isRecordingEnabled, getRecordingPath, compressRecording } = require("../utils/recordingService");
 const stateBroadcaster = require("./StateBroadcaster");
+const { safeCloseWs } = require("../utils/wsClose");
 
 const MAX_LOG_BUFFER_SIZE = 200 * 1024;
 const sessions = new Map();
@@ -324,10 +325,10 @@ const closeAllWebSockets = (sessionId, code = 1000, reason = "Session terminated
     if (!session) return;
     const sharedCode = code === 1000 ? 4016 : code;
     for (const ws of session.connectedWs) {
-        try { if (ws.readyState <= 1) ws.close(code, reason); } catch {}
+        safeCloseWs(ws, code, reason);
     }
     for (const ws of session.sharedWs) {
-        try { if (ws.readyState <= 1) ws.close(sharedCode, reason); } catch {}
+        safeCloseWs(ws, sharedCode, reason);
     }
     session.connectedWs.clear();
     session.sharedWs.clear();
@@ -407,11 +408,18 @@ module.exports.remove = (sessionId, options = {}) => {
     if (!session) return Promise.resolve(false);
     if (session._removePromise) return session._removePromise;
     session._removing = true;
+    const wasSshSession = session.masterConnection?.type === "ssh";
 
-    const { code = 1000, reason = "Session terminated", broadcast = true } = options;
+    const { code = 1000, reason = "Session terminated", broadcast = true, skipAfterHooks = false } = options;
     session._removePromise = (async () => {
         closeAllWebSockets(sessionId, code, reason);
-        if (session.recording) await finalizeTerminalRecording(sessionId);
+        if (session.recording) {
+            try {
+                await finalizeTerminalRecording(sessionId);
+            } catch (err) {
+                logger.warn("Failed to finalize terminal recording", { sessionId, error: err.message });
+            }
+        }
         if (session.masterConnection) {
             await cleanupConnection(session.masterConnection, sessionId);
             session.masterConnection = null;
@@ -423,6 +431,16 @@ module.exports.remove = (sessionId, options = {}) => {
         session.participants.clear();
 
         const { accountId, organizationId } = session;
+        if (wasSshSession && !skipAfterHooks && !session._afterHooksDone) {
+            session._afterHooksDone = true;
+            const { runAfterHooks } = require("./ConnectionHooks");
+            runAfterHooks({
+                entryId: session.entryId,
+                accountId,
+                identityId: session.configuration?.identityId || null,
+                directIdentity: session.configuration?.directIdentity || null,
+            }).catch(() => {});
+        }
         if (sessions.get(sessionId) === session) sessions.delete(sessionId);
         logger.info("Session removed", { sessionId });
         if (broadcast) {

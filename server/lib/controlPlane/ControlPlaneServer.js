@@ -19,6 +19,7 @@ const {
     buildSessionResize,
     buildExecCommand,
     buildExecBatch,
+    buildHostExec,
     buildPortCheck,
     buildHttpFetch,
 } = require("./messageBuilders");
@@ -175,6 +176,16 @@ class ControlPlaneServer extends EventEmitter {
         }, null, engine.engineId);
     }
 
+    hostExec(command, engineId = null, timeoutMs = 30000) {
+        const engine = this._resolveEngine(engineId);
+        if (!engine) return Promise.reject(new Error("No engine connected"));
+
+        const requestId = `hostexec-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+        return this._createPendingRequest(requestId, null, () => {
+            this._sendFrame(engine.socket, buildHostExec(requestId, command, timeoutMs));
+        }, null, engine.engineId, timeoutMs + 5000);
+    }
+
     portCheck(targets, timeoutMs = 2000, engineId = null) {
         const engine = this._resolveEngine(engineId);
         if (!engine) return Promise.reject(new Error("No engine connected"));
@@ -224,6 +235,12 @@ class ControlPlaneServer extends EventEmitter {
         return this._engines.get(String(engineId)) || null;
     }
 
+    getDefaultEngineInfo() {
+        const first = this._engines.entries().next();
+        if (first.done) return null;
+        return { engineId: first.value[0], ...first.value[1] };
+    }
+
     disconnectEngine(engineId) {
         const key = String(engineId);
         const engine = this._engines.get(key);
@@ -233,12 +250,12 @@ class ControlPlaneServer extends EventEmitter {
         return true;
     }
 
-    _createPendingRequest(key, onResult, onSend, joinSessionId = null, ownerEngineId = null) {
+    _createPendingRequest(key, onResult, onSend, joinSessionId = null, ownerEngineId = null, timeoutMs = SESSION_TIMEOUT) {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 this._pending.delete(key);
                 reject(new Error("Request timeout"));
-            }, SESSION_TIMEOUT);
+            }, timeoutMs);
 
             this._pending.set(key, { resolve, reject, timeout, onResult, joinSessionId, ownerEngineId });
             onSend();
@@ -649,6 +666,21 @@ class ControlPlaneServer extends EventEmitter {
                     success: result.success(),
                     errorMessage: result.errorMessage(),
                     results,
+                }, respondingEngineId);
+                break;
+            }
+
+            case MessageType.HostExecResult: {
+                const result = envelope.hostExecResult();
+                if (!result) break;
+
+                this._resolvePending(result.requestId(), {
+                    success: result.success(),
+                    stdout: result.stdoutData() || "",
+                    stderr: result.stderrData() || "",
+                    exitCode: result.exitCode(),
+                    errorMessage: result.errorMessage(),
+                    truncated: result.truncated(),
                 }, respondingEngineId);
                 break;
             }

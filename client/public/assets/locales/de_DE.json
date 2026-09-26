@@ -1712,6 +1712,22 @@
           "removeTooltip": "Jump Host entfernen",
           "noServersAvailable": "Keine SSH Server für Jump Hosts verfügbar. Erstelle zunächst SSH Server."
         },
+        "hooks": {
+          "pre": {
+            "title": "Pre-Connect-Commands",
+            "description": "Werden vor dem Aufbau der SSH-Verbindung ausgeführt. Ein fehlgeschlagener Engine-Command bricht die Verbindung ab."
+          },
+          "after": {
+            "title": "Post-Disconnect-Commands",
+            "description": "Werden nach dem Beenden der SSH-Sitzung ausgeführt. Fehler werden nur protokolliert."
+          },
+          "localBadge": "ENGINE",
+          "remoteBadge": "ZIEL",
+          "localHint": "Wird auf dem Engine-Host ausgeführt",
+          "remoteHint": "Wird auf dem Zielserver ausgeführt",
+          "unknownEngineHint": "Gewählte Engine (ID {{engine}}) ist unbekannt oder offline",
+          "swapTooltip": "Reihenfolge tauschen"
+        },
         "monitoring": {
           "title": "Leistungsüberwachung aktivieren",
           "description": "Erfasse Prozessor-, Arbeitsspeicher-, Festplatten- und Netzwerkmetriken für diesen Server"

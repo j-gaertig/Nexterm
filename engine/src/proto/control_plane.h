@@ -6,7 +6,7 @@
 #include <pthread.h>
 #include <openssl/ssl.h>
 
-#define NEXTERM_ENGINE_VERSION "1.2.2-BETA"
+#define NEXTERM_ENGINE_VERSION "1.3.0-BETA"
 
 typedef struct nexterm_control_plane {
     int sock_fd;
@@ -72,6 +72,15 @@ int nexterm_cp_send_exec_result(nexterm_control_plane_t* cp,
                                 const char* stderr_data,
                                 int32_t exit_code,
                                 const char* error_message);
+
+int nexterm_cp_send_host_exec_result(nexterm_control_plane_t* cp,
+                                     const char* request_id,
+                                     bool success,
+                                     const char* stdout_data,
+                                     const char* stderr_data,
+                                     int32_t exit_code,
+                                     const char* error_message,
+                                     bool truncated);
 
 int nexterm_cp_send_port_check_result(nexterm_control_plane_t* cp,
                                        const char* request_id,

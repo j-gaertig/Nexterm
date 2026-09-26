@@ -12,6 +12,7 @@ export const getFieldConfig = (type, protocol) => {
                     showMonitoring: true,
                     showKeyboardLayout: false,
                     showTerminalSettings: true,
+                    showConnectionHooks: true,
                     allowedAuthTypes: ["password", "ssh", "both"],
                     showWakeOnLan: true,
                 };
@@ -146,7 +147,7 @@ export const getAvailableTabs = (type, protocol) => {
         tabs.push({ key: "identities", label: "servers.dialog.tabs.identities", icon: mdiAccountKeyOutline });
     }
 
-    if (config.showSettings && (config.showMonitoring || config.showKeyboardLayout || config.showDisplaySettings || config.showAudioSettings || config.showWakeOnLan || config.showTerminalSettings)) {
+    if (config.showSettings && (config.showMonitoring || config.showKeyboardLayout || config.showDisplaySettings || config.showAudioSettings || config.showWakeOnLan || config.showTerminalSettings || config.showConnectionHooks)) {
         tabs.push({ key: "settings", label: "servers.dialog.tabs.settings", icon: mdiCogOutline });
     }
 

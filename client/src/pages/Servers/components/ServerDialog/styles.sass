@@ -606,6 +606,105 @@
         background-color: colors.$dark-gray
         color: colors.$white
 
+    .hook-list
+      display: flex
+      flex-direction: column
+      gap: 0.375rem
+      flex: 1
+      min-width: 0
+
+    .hook-reorder
+      display: flex
+      align-items: stretch
+      gap: 0.625rem
+      margin-bottom: 0.625rem
+
+      .hook-swap-btn
+        align-self: center
+        background: transparent
+        border: 1px solid colors.$gray
+        border-radius: 0.5rem
+        padding: 0.5rem
+        cursor: pointer
+        color: colors.$subtext
+        transition: background-color 0.1s ease, color 0.1s ease, border-color 0.1s ease
+        display: flex
+        align-items: center
+        justify-content: center
+        flex-shrink: 0
+
+        &:hover
+          background-color: colors.$dark-gray
+          color: colors.$white
+          border-color: colors.$primary
+
+    .hook-item
+      display: flex
+      align-items: flex-start
+      gap: 0.625rem
+      padding: 0.625rem 0.75rem
+      background-color: transparent
+      border: 1px solid colors.$gray
+      border-radius: 0.5rem
+      transition: background-color 0.1s ease
+
+      &:hover
+        background-color: colors.$dark-gray
+
+      .hook-badge
+        display: flex
+        align-items: center
+        height: 1.5rem
+        margin-top: 0.375rem
+        padding: 0 0.5rem
+        border-radius: 0.375rem
+        font-weight: 700
+        font-size: 0.65rem
+        letter-spacing: 0.05em
+        flex-shrink: 0
+
+      .hook-badge--local
+        background-color: colors.$gray
+        color: colors.$white
+
+      .hook-badge--remote
+        background-color: rgba(colors.$primary, 0.15)
+        color: colors.$primary
+
+      .hook-input
+        flex: 1
+        display: flex
+        flex-direction: column
+        gap: 0.25rem
+        min-width: 0
+
+        .hook-textarea
+          width: 100%
+          box-sizing: border-box
+          padding: 0.5rem 0.625rem
+          border: 1px solid colors.$gray
+          background-color: colors.$lighter-background
+          color: colors.$white
+          border-radius: 0.5rem
+          font-size: 0.8rem
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
+          outline: none
+          resize: none
+          transition: border-color 0.1s ease, background-color 0.1s ease
+
+          &:focus
+            border: 1px solid colors.$primary
+            background-color: colors.$dark-gray
+
+          &::placeholder
+            color: colors.$subtext
+            opacity: 0.7
+
+    .hook-engine-hint
+      font-size: 0.75rem
+      color: colors.$subtext
+      margin: 0
+
     .no-jump-hosts-message
       text-align: center
       padding: 1rem

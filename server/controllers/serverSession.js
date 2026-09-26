@@ -192,7 +192,7 @@ const reconnectSession = ({ accountId, sessionId, ...options }) => {
             return { code: 400, message: "Session entry cannot be changed" };
         }
 
-        if (existing) await SessionManager.remove(sessionId, { broadcast: false });
+        if (existing) await SessionManager.remove(sessionId, { broadcast: false, skipAfterHooks: true });
         SessionManager.clearFailedReason(sessionId);
 
         const result = await createSession({

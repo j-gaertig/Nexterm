@@ -13,6 +13,7 @@ const {
     ExecCommand,
     ExecBatch,
     ExecBatchCommand,
+    HostExec,
     PortCheck,
     PortCheckTarget,
     JumpHost,
@@ -223,6 +224,23 @@ const buildExecBatch = (requestId, host, port, params, commands, jumpHosts) => {
     return finishEnvelope(builder, Envelope.endEnvelope(builder));
 };
 
+const buildHostExec = (requestId, command, timeoutMs) => {
+    const builder = new flatbuffers.Builder(1024);
+    const reqIdOff = builder.createString(requestId);
+    const cmdOff = builder.createString(command);
+
+    HostExec.startHostExec(builder);
+    HostExec.addRequestId(builder, reqIdOff);
+    HostExec.addCommand(builder, cmdOff);
+    HostExec.addTimeoutMs(builder, timeoutMs);
+    const execOff = HostExec.endHostExec(builder);
+
+    Envelope.startEnvelope(builder);
+    Envelope.addMsgType(builder, MessageType.HostExec);
+    Envelope.addHostExec(builder, execOff);
+    return finishEnvelope(builder, Envelope.endEnvelope(builder));
+};
+
 const buildPortCheck = (requestId, targets, timeoutMs) => {
     const builder = new flatbuffers.Builder(512);
     const reqIdOff = builder.createString(requestId);
@@ -294,6 +312,7 @@ module.exports = {
     buildSessionResize,
     buildExecCommand,
     buildExecBatch,
+    buildHostExec,
     buildPortCheck,
     buildHttpFetch,
 };

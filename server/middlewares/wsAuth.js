@@ -6,6 +6,7 @@ const SessionManager = require("../lib/SessionManager");
 const { validateEntryAccess } = require("../controllers/entry");
 const { getOrganizationAuditSettingsInternal } = require("../controllers/audit");
 const { resolveIdentity } = require("../utils/identityResolver");
+const { safeCloseWs } = require("../utils/wsClose");
 
 const SHARED_ENTRY_ATTRIBUTES = ["id", "type", "config", "integrationId"];
 
@@ -59,7 +60,10 @@ const authenticateOrganizationJoin = async (ws, query) => {
     if (!auth) return null;
 
     const access = await require("../controllers/liveSession").resolveJoinAccess(auth.user.id, joinSessionId);
-    if (access.code) return ws.close(access.code === 404 ? 4007 : 4003, access.message), null;
+    if (access.code) {
+        safeCloseWs(ws, access.code === 404 ? 4007 : 4003, access.message);
+        return null;
+    }
 
     const entry = await Entry.findByPk(access.session.entryId, { attributes: SHARED_ENTRY_ATTRIBUTES });
     if (!entry) return ws.close(4005, "Entry not found"), null;
@@ -89,7 +93,7 @@ const authenticateWebSocket = async (ws, query) => {
         serverSession = SessionManager.get(sessionId);
         if (!serverSession) {
             const failedReason = SessionManager.consumeFailedReason(sessionId);
-            if (failedReason) ws.close(4017, failedReason);
+            if (failedReason) safeCloseWs(ws, 4017, failedReason);
             else ws.close(4007, "Invalid session ID");
             return null;
         }

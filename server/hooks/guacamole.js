@@ -3,6 +3,7 @@ const GuacdClient = require("../lib/GuacdClient");
 const controlPlane = require("../lib/controlPlane/ControlPlaneServer");
 const logger = require("../utils/logger");
 const { buildParticipant, createWriteGuard } = require("../utils/sessionParticipant");
+const { safeCloseWs } = require("../utils/wsClose");
 
 const SIZED_MONITOR = /\.size,\d+\.-?\d+,\d+\.-?\d+,\d+\.(-?\d+)/;
 const MOUSE_BUTTONS = /\.mouse,\d+\.\d+,\d+\.\d+,(\d+)\.(\d+);/;
@@ -68,10 +69,7 @@ const handleGuacJoin = async (ws, sessionId, ctx, pinnedMonitor = null) => {
             }
         },
         onClose: (reason) => {
-            try {
-                if (ws.readyState <= 1) ws.close(4014, reason);
-            } catch {
-            }
+            safeCloseWs(ws, 4014, reason);
         },
     });
     joinClient.connect();

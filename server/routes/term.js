@@ -4,6 +4,7 @@ const pveLxcHook = require("../hooks/pve-lxc");
 const telnetHook = require("../hooks/telnet");
 const logger = require("../utils/logger");
 const SessionManager = require("../lib/SessionManager");
+const { safeCloseWs } = require("../utils/wsClose");
 
 const waitForConnection = async (sessionId, timeoutMs = 30000) => {
     const start = Date.now();
@@ -39,7 +40,7 @@ module.exports = async (ws, req) => {
     if (!conn) {
         if (sessionRemoved) {
             const failedReason = SessionManager.consumeFailedReason(serverSession.sessionId);
-            if (failedReason) return ws.close(4017, failedReason);
+            if (failedReason) return safeCloseWs(ws, 4017, failedReason);
         } else {
             logger.warn("Connection timeout", { sessionId: serverSession.sessionId });
         }
@@ -50,9 +51,9 @@ module.exports = async (ws, req) => {
         if (protocol === "ssh") await sshHook(ws, { ...context, reuseConnection: true });
         else if (protocol === "telnet") await telnetHook(ws, { ...context, reuseConnection: true });
         else if (protocol === "pve-lxc" || protocol === "pve-shell") await pveLxcHook(ws, { ...context, reuseConnection: true });
-        else ws.close(4009, `Unsupported: ${entry.type}`);
+        else safeCloseWs(ws, 4009, `Unsupported: ${entry.type}`);
     } catch (err) {
         logger.error("Terminal error", { error: err.message, sessionId: serverSession.sessionId });
-        ws.close(4005, err.message);
+        safeCloseWs(ws, 4005, err.message);
     }
 };
