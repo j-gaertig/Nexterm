@@ -52,8 +52,13 @@ class ScriptLayer {
         logger.info("Script starting", { sessionId: this.sessionId, name: this.script.name });
         this.broadcast(MSG.SCRIPT_START, { name: this.script.name });
         
-        const { b64 } = transformScript(this.script.content);
-        this.commandQueue = getScriptCommands(b64);
+        let osFilter = this.script.osFilter;
+        if (typeof osFilter === "string") {
+            try { osFilter = JSON.parse(osFilter); } catch { osFilter = []; }
+        }
+        const platform = Array.isArray(osFilter) && osFilter.some(os => typeof os === "string" && os.toLowerCase().includes("windows")) ? "windows" : "linux";
+        const { b64 } = transformScript(this.script.content, platform);
+        this.commandQueue = getScriptCommands(b64, platform);
         this.commandIndex = 0;
         
         this.stream.on("data", this.onData);

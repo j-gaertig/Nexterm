@@ -57,6 +57,11 @@ module.exports.getServerMonitoring = async (accountId, entryId, timeRange = "1h"
         const access = await validateEntryAccess(accountId, entry);
         if (!access.valid) return access;
         const { data, latest } = await fetchMonitoringData({ entryId }, timeRange);
+        if (!latest.osInfo?.name && entry.config?.protocol === "ssh") {
+            const { detectServerOS } = require("../utils/monitoringService");
+            const detectedOsInfo = await detectServerOS(entry);
+            if (detectedOsInfo) latest.osInfo = detectedOsInfo;
+        }
         return {
             server: { id: entry.id, name: entry.name, ip: entry.config?.ip, port: entry.config?.port, status: entry.status, monitoringEnabled: entry.config?.monitoringEnabled },
             data, timeRange, latest,
