@@ -1,0 +1,57 @@
+name: Build Connector (Windows x64)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-connector:
+    name: Build 64-bit Windows connector
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Yarn
+        run: npm install --global yarn
+
+      - name: Install client dependencies
+        working-directory: client
+        run: yarn install
+
+      - name: Build client
+        working-directory: client
+        run: yarn build
+
+      - name: Install connector dependencies
+        working-directory: connector
+        run: yarn install
+
+      - name: Build connector installers
+        working-directory: connector
+        run: yarn tauri build --target x86_64-pc-windows-msvc
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload Windows x64 installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexterm-connector-windows-x64-${{ github.run_number }}
+          path: |
+            connector/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            connector/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 30
