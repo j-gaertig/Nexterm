@@ -722,16 +722,19 @@ class _ServersScreenState extends State<ServersScreen> {
     );
 
   IconData _serverIcon(Server server) {
+    final icon = server.icon;
+    if (icon != null && icon.startsWith('mdi') && icon.length > 3) {
+      final camel = icon.substring(3, 4).toLowerCase() + icon.substring(4);
+      final hit = _mdiByCamelName[camel];
+      if (hit != null) return hit;
+    }
     if (server.type == 'pve-lxc') return MdiIcons.cubeOutline;
     if (server.type == 'pve-qemu') return MdiIcons.monitor;
     if (server.type == 'pve-shell') return MdiIcons.console;
     final p = server.protocol?.toLowerCase();
     if (p == 'rdp') return MdiIcons.microsoftWindows;
     if (p == 'vnc') return MdiIcons.remoteDesktop;
-    final icon = server.icon;
-    if (icon == null || !icon.startsWith('mdi')) return MdiIcons.server;
-    final camel = icon.substring(3, 4).toLowerCase() + icon.substring(4);
-    return _mdiByCamelName[camel] ?? MdiIcons.server;
+    return MdiIcons.server;
   }
 
   Color _parseColor(String c) {
