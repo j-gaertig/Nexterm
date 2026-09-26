@@ -41,6 +41,9 @@ class TerminalRenderer extends StatefulWidget {
 class _TerminalRendererState extends State<TerminalRenderer> {
   Terminal get _terminal => widget.session.terminal!;
   IOWebSocketChannel? get _channel => widget.session.termChannel;
+  final GlobalKey<TerminalViewState> _terminalViewKey = GlobalKey<TerminalViewState>();
+  final GlobalKey _cursorOverlayStackKey = GlobalKey();
+  final ValueNotifier<int> _cursorRevision = ValueNotifier(0);
   bool _connected = false;
   bool _receivedData = false;
   String? _errorMessage;
@@ -55,6 +58,7 @@ class _TerminalRendererState extends State<TerminalRenderer> {
   @override
   void initState() {
     super.initState();
+    _terminal.addListener(_onTerminalChanged);
     _terminalFocusNode.addListener(_onFocusChanged);
     widget.session.showSnippets = _showSnippets;
     widget.session.showAI = _showAISheet;
@@ -63,6 +67,8 @@ class _TerminalRendererState extends State<TerminalRenderer> {
     });
     _setupTerminal();
   }
+
+  void _onTerminalChanged() => _cursorRevision.value++;
 
   void _onFocusChanged() {
     if (mounted) setState(() => _showKeyboardToolbar = _terminalFocusNode.hasFocus);
@@ -136,6 +142,8 @@ class _TerminalRendererState extends State<TerminalRenderer> {
 
   @override
   void dispose() {
+    _terminal.removeListener(_onTerminalChanged);
+    _cursorRevision.dispose();
     _terminalFocusNode.removeListener(_onFocusChanged);
     _terminalFocusNode.dispose();
     super.dispose();
@@ -323,22 +331,47 @@ class _TerminalRendererState extends State<TerminalRenderer> {
                   Expanded(
                     child: GestureDetector(
                       onTap: () => _terminalFocusNode.requestFocus(),
-                      child: TerminalView(
-                        _terminal,
-                        theme: widget.terminalSettings.colorTheme.theme,
-                        cursorType: TerminalCursorType.verticalBar,
-                        keyboardType: TextInputType.visiblePassword,
-                        textStyle: TerminalStyle(
-                          fontSize: widget.terminalSettings.fontSize,
-                          fontFamily: GoogleFonts.jetBrainsMono().fontFamily ?? 'monospace',
-                          height: 1.2,
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (_) {
+                          _cursorRevision.value++;
+                          return false;
+                        },
+                        child: Stack(
+                          key: _cursorOverlayStackKey,
+                          fit: StackFit.expand,
+                          children: [
+                            TerminalView(
+                              _terminal,
+                              key: _terminalViewKey,
+                              theme: _hideTerminalCursor(widget.terminalSettings.colorTheme.theme),
+                              cursorType: TerminalCursorType.block,
+                              keyboardType: TextInputType.visiblePassword,
+                              textStyle: TerminalStyle(
+                                fontSize: widget.terminalSettings.fontSize,
+                                fontFamily: GoogleFonts.jetBrainsMono().fontFamily ?? 'monospace',
+                                height: 1.2,
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              focusNode: _terminalFocusNode,
+                              autofocus: true,
+                              deleteDetection: Platform.isIOS,
+                            ),
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: _LineCursorPainter(
+                                    terminal: _terminal,
+                                    terminalViewKey: _terminalViewKey,
+                                    stackKey: _cursorOverlayStackKey,
+                                    repaint: _cursorRevision,
+                                    color: widget.terminalSettings.colorTheme.theme.cursor,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        focusNode: _terminalFocusNode,
-                        autofocus: true,
-                        deleteDetection: Platform.isIOS,
                       ),
-                    ),
                   ),
                   if (_showKeyboardToolbar) _buildKeyboardToolbar(),
                 ],
@@ -445,4 +478,75 @@ class _TerminalRendererState extends State<TerminalRenderer> {
       ),
     );
   }
+}
+
+TerminalTheme _hideTerminalCursor(TerminalTheme theme) => TerminalTheme(
+      cursor: Colors.transparent,
+      selection: theme.selection,
+      foreground: theme.foreground,
+      background: theme.background,
+      black: theme.black,
+      white: theme.white,
+      red: theme.red,
+      green: theme.green,
+      yellow: theme.yellow,
+      blue: theme.blue,
+      magenta: theme.magenta,
+      cyan: theme.cyan,
+      brightBlack: theme.brightBlack,
+      brightRed: theme.brightRed,
+      brightGreen: theme.brightGreen,
+      brightYellow: theme.brightYellow,
+      brightBlue: theme.brightBlue,
+      brightMagenta: theme.brightMagenta,
+      brightCyan: theme.brightCyan,
+      brightWhite: theme.brightWhite,
+      searchHitBackground: theme.searchHitBackground,
+      searchHitBackgroundCurrent: theme.searchHitBackgroundCurrent,
+      searchHitForeground: theme.searchHitForeground,
+    );
+
+class _LineCursorPainter extends CustomPainter {
+  _LineCursorPainter({
+    required this.terminal,
+    required this.terminalViewKey,
+    required this.stackKey,
+    required this.repaint,
+    required this.color,
+  }) : super(repaint: repaint);
+
+  final Terminal terminal;
+  final GlobalKey<TerminalViewState> terminalViewKey;
+  final GlobalKey stackKey;
+  final Listenable repaint;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!terminal.cursorVisibleMode) return;
+
+    final cursorRect = terminalViewKey.currentState?.globalCursorRect;
+    final stackRenderObject = stackKey.currentContext?.findRenderObject();
+    if (cursorRect == null ||
+        stackRenderObject is! RenderBox ||
+        !stackRenderObject.hasSize) return;
+
+    final cursorOffset = stackRenderObject.globalToLocal(cursorRect.topLeft);
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5;
+    canvas.drawLine(
+      cursorOffset,
+      cursorOffset.translate(0, cursorRect.height),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_LineCursorPainter oldDelegate) =>
+      oldDelegate.terminal != terminal ||
+      oldDelegate.terminalViewKey != terminalViewKey ||
+      oldDelegate.stackKey != stackKey ||
+      oldDelegate.repaint != repaint ||
+      oldDelegate.color != color;
 }

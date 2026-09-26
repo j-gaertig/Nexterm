@@ -43,10 +43,24 @@ void main() {
     );
 
     final terminalView = tester.widget<TerminalView>(find.byType(TerminalView));
-    expect(terminalView.cursorType, TerminalCursorType.verticalBar);
+    expect(terminalView.cursorType, TerminalCursorType.block);
+    expect(terminalView.theme.cursor, Colors.transparent);
     expect(terminalView.keyboardType, TextInputType.visiblePassword);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint &&
+            widget.painter.runtimeType.toString().contains('LineCursorPainter'),
+      ),
+      findsOneWidget,
+    );
 
-      terminal.write('first');
+    final initialCursorTop = tester
+        .state<TerminalViewState>(find.byType(TerminalView))
+        .globalCursorRect
+        .top;
+
+    terminal.write('first');
     expect(terminal.buffer.cursorX, 5);
     terminal.write(' ');
     expect(terminal.buffer.cursorX, 6);
@@ -55,6 +69,12 @@ void main() {
     terminal.write('\r\n');
     expect(terminal.buffer.cursorX, 0);
     expect(terminal.buffer.cursorY, 1);
+
+    await tester.pump();
+    final cursorRect = tester
+        .state<TerminalViewState>(find.byType(TerminalView))
+        .globalCursorRect;
+    expect(cursorRect.top, greaterThan(initialCursorTop));
 
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpWidget(const SizedBox.shrink());
