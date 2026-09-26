@@ -2,14 +2,14 @@ name: Build Android APK (arm64-v8a)
 
 on:
   workflow_dispatch:
-    inputs:
-      version_code:
-        description: Must be higher than the version code installed on your phone; increase it for each APK
-        required: true
-        type: number
+
+concurrency:
+  group: android-apk-version-code
+  cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   build-apk:
@@ -30,6 +30,24 @@ jobs:
         with:
           flutter-version: "3.44.6"
           channel: stable
+
+      - name: Reserve next Android version code
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          variable="repos/${GITHUB_REPOSITORY}/actions/variables/ANDROID_VERSION_CODE"
+          current=$(gh api "$variable" --jq '.value')
+          if ! [[ "$current" =~ ^[0-9]+$ ]] || (( current >= 2100000000 )); then
+            echo "ANDROID_VERSION_CODE must be an integer from 0 to 2099999999."
+            exit 1
+          fi
+          next=$((current + 1))
+          gh api --method PATCH "$variable" -f value="$next" >/dev/null
+          echo "version_code=$next" >> "$GITHUB_OUTPUT"
+          echo "Reserved Android version code $next"
 
       - name: Configure release signing
         working-directory: mobile/android
@@ -62,7 +80,7 @@ jobs:
         working-directory: mobile
         shell: bash
         env:
-          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
         run: |
           set -euo pipefail
           VERSION_LINE=$(grep '^version:' pubspec.yaml | head -n1 | awk '{print $2}')
@@ -87,7 +105,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nexterm-android-arm64-v8a-${{ inputs.version_code }}
+          name: nexterm-android-arm64-v8a-${{ steps.version.outputs.version_code }}
           path: artifacts/*.apk
           if-no-files-found: error
           retention-days: 30
