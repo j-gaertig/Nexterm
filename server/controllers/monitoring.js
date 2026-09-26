@@ -26,13 +26,11 @@ const toJson = (obj) => obj?.toJSON ? obj.toJSON() : obj || {};
 
 const fetchMonitoringData = async (whereClause, timeRange) => {
     const { ms, points } = TIME_RANGES[timeRange] || TIME_RANGES["1h"];
-    const [data, fallback, snapshot] = await Promise.all([
+    const [data, snapshot] = await Promise.all([
         MonitoringData.findAll({ where: { ...whereClause, timestamp: { [Op.gte]: new Date(Date.now() - ms) } }, order: [["timestamp", "DESC"]] }),
-        MonitoringData.findAll({ where: whereClause, order: [["timestamp", "DESC"]], limit: 100 }),
         MonitoringSnapshot.findOne({ where: whereClause }),
     ]);
-    const result = data.length > 0 ? data : fallback;
-    return { data: sampleData(result, points).map(extractChartData), latest: { ...toJson(result[0]), ...toJson(snapshot) } };
+    return { data: sampleData(data, points).map(extractChartData), latest: { ...toJson(data[0]), ...toJson(snapshot) } };
 };
 
 module.exports.getIntegrationMonitoring = async (accountId, integrationId, timeRange = "1h") => {

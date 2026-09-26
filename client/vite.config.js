@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import * as path from "path";
 import * as fs from "fs";
 
+const apiPort = process.env.SERVER_PORT || 6989;
+
 const guacamolePlugin = () => {
     const modulesDir = path.resolve(__dirname, '../vendor/guacamole-client/guacamole-common-js/src/main/webapp/modules');
     const virtualId = 'virtual:guacamole-common-js';
@@ -43,7 +45,7 @@ export default defineConfig({
     server: {
         proxy: {
             "/api": {
-                target: "http://localhost:6989",
+                target: `http://localhost:${apiPort}`,
                 ws: true
             }
         }
