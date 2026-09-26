@@ -64,6 +64,8 @@ class _SftpRendererState extends State<SftpRenderer> {
   bool _initialized = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 5;
+  bool _lastShowHiddenFiles = false;
+  bool _lastSortFoldersFirst = true;
 
   String get _sessionId => widget.session.sessionId;
 
@@ -99,6 +101,9 @@ class _SftpRendererState extends State<SftpRenderer> {
     super.initState();
     _currentPath = widget.session.sftpPath ?? '/';
     _rootPath = widget.session.sftpRootPath ?? '/';
+    _lastShowHiddenFiles = widget.sftpSettings.showHiddenFiles;
+    _lastSortFoldersFirst = widget.sftpSettings.sortFoldersFirst;
+    widget.sftpSettings.addListener(_onSftpSettingsChanged);
     _setupConnection();
   }
 
@@ -301,6 +306,7 @@ class _SftpRendererState extends State<SftpRenderer> {
   }
 
   void _listDirectory(String path) {
+    if (!mounted) return;
     setState(() => _loading = true);
     _sendOperation(_SftpOps.listFiles, {'path': path});
   }
@@ -364,6 +370,18 @@ class _SftpRendererState extends State<SftpRenderer> {
   }
 
   void _refresh() => _listDirectory(_currentPath);
+
+  void _onSftpSettingsChanged() {
+    final settings = widget.sftpSettings;
+    if (settings.showHiddenFiles != _lastShowHiddenFiles ||
+        settings.sortFoldersFirst != _lastSortFoldersFirst) {
+      _lastShowHiddenFiles = settings.showHiddenFiles;
+      _lastSortFoldersFirst = settings.sortFoldersFirst;
+      _refresh();
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
 
   void _showRenameDialog(SftpEntry entry) {
     final controller = TextEditingController(text: entry.name);
@@ -629,6 +647,7 @@ class _SftpRendererState extends State<SftpRenderer> {
 
   @override
   void dispose() {
+    widget.sftpSettings.removeListener(_onSftpSettingsChanged);
     super.dispose();
   }
 
@@ -891,6 +910,9 @@ class _SftpRendererState extends State<SftpRenderer> {
     final entry = _entries[index];
     final theme = Theme.of(context);
     final isSelected = _selectedIndices.contains(index);
+    final isDimmed = entry.name.startsWith('.') &&
+        widget.sftpSettings.dimHiddenFiles &&
+        !isSelected;
 
     return Material(
       color: isSelected
@@ -899,61 +921,64 @@ class _SftpRendererState extends State<SftpRenderer> {
       child: InkWell(
         onTap: () => _onEntryTap(entry, index),
         onLongPress: () => _onEntryLongPress(index),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              if (_selectionMode)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
+        child: Opacity(
+          opacity: isDimmed ? 0.55 : 1.0,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                if (_selectionMode)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: Icon(
+                      isSelected ? MdiIcons.checkboxMarked : MdiIcons.checkboxBlankOutline,
+                      color: isSelected ? theme.colorScheme.primary : theme.colorScheme.outline,
+                      size: 22,
+                    ),
+                  ),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: _getFileIconColor(entry, theme).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   child: Icon(
-                    isSelected ? MdiIcons.checkboxMarked : MdiIcons.checkboxBlankOutline,
-                    color: isSelected ? theme.colorScheme.primary : theme.colorScheme.outline,
+                    _getFileIcon(entry),
+                    color: _getFileIconColor(entry, theme),
                     size: 22,
                   ),
                 ),
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: _getFileIconColor(entry, theme).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(entry.name,
+                          style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 2),
+                      Text(
+                        [
+                          if (!entry.isDir) entry.formattedSize,
+                          if (entry.mtime > 0) _formatDate(entry.modifiedDate),
+                        ].join(' • '),
+                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+                      ),
+                    ],
+                  ),
                 ),
-                child: Icon(
-                  _getFileIcon(entry),
-                  color: _getFileIconColor(entry, theme),
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(entry.name,
-                        style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
-                        overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 2),
-                    Text(
-                      [
-                        if (!entry.isDir) entry.formattedSize,
-                        if (entry.mtime > 0) _formatDate(entry.modifiedDate),
-                      ].join(' • '),
-                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
-                    ),
-                  ],
-                ),
-              ),
-              if (!_selectionMode)
-                IconButton(
-                  icon: Icon(MdiIcons.dotsVertical, color: theme.colorScheme.outline, size: 20),
-                  onPressed: () => _showEntryActions(entry),
-                  visualDensity: VisualDensity.compact,
-                ),
-              if (!_selectionMode && entry.isDir)
-                Icon(MdiIcons.chevronRight, color: theme.colorScheme.outline, size: 20),
-            ],
+                if (!_selectionMode)
+                  IconButton(
+                    icon: Icon(MdiIcons.dotsVertical, color: theme.colorScheme.outline, size: 20),
+                    onPressed: () => _showEntryActions(entry),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                if (!_selectionMode && entry.isDir)
+                  Icon(MdiIcons.chevronRight, color: theme.colorScheme.outline, size: 20),
+              ],
+            ),
           ),
         ),
       ),
