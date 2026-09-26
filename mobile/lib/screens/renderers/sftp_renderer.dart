@@ -911,8 +911,7 @@ class _SftpRendererState extends State<SftpRenderer> {
     final theme = Theme.of(context);
     final isSelected = _selectedIndices.contains(index);
     final isDimmed = entry.name.startsWith('.') &&
-        widget.sftpSettings.dimHiddenFiles &&
-        !isSelected;
+        widget.sftpSettings.dimHiddenFiles;
 
     return Material(
       color: isSelected
