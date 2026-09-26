@@ -1,6 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import SelectBox from "@/common/components/SelectBox";
 import ToggleSwitch from "@/common/components/ToggleSwitch";
+import ConnectionHooksSection from "@/pages/Servers/components/ServerDialog/components/ConnectionHooksSection.jsx";
 import { ServerContext } from "@/common/contexts/ServerContext.jsx";
 import Icon from "@mdi/react";
 import { mdiServerNetwork, mdiClose, mdiPlus, mdiChartLine, mdiMonitor, mdiPalette, mdiVolumeHigh, mdiPowerPlug, mdiKeyboardOutline, mdiShieldLock } from "@mdi/js";
@@ -171,8 +172,9 @@ const SettingsPage = ({ config, setConfig, monitoringEnabled, setMonitoringEnabl
     };
 
     const showJumpHosts = config?.protocol === 'ssh';
+    const showConnectionHooks = config?.protocol === 'ssh' && fieldConfig.showConnectionHooks;
 
-    if (!fieldConfig.showMonitoring && !fieldConfig.showKeyboardLayout && !fieldConfig.showDisplaySettings && !fieldConfig.showAudioSettings && !fieldConfig.showWakeOnLan && !fieldConfig.showTerminalSettings && !showJumpHosts) {
+    if (!fieldConfig.showMonitoring && !fieldConfig.showKeyboardLayout && !fieldConfig.showDisplaySettings && !fieldConfig.showAudioSettings && !fieldConfig.showWakeOnLan && !fieldConfig.showTerminalSettings && !showJumpHosts && !showConnectionHooks) {
         return <p className="text-center">{t('servers.dialog.settings.noSettings')}</p>;
     }
 
@@ -238,6 +240,10 @@ const SettingsPage = ({ config, setConfig, monitoringEnabled, setMonitoringEnabl
                         </p>
                     )}
                 </div>
+            )}
+
+            {showConnectionHooks && (
+                <ConnectionHooksSection config={config} setConfig={setConfig} />
             )}
 
             {fieldConfig.showMonitoring && (

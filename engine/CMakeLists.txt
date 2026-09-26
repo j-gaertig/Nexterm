@@ -72,6 +72,7 @@ set(ENGINE_SOURCES
     src/core/log.c
     src/core/session.c
     src/net/connection.c
+    src/net/host_exec.c
     src/net/ssh.c
     src/net/ssh_common.c
     src/net/sftp.c

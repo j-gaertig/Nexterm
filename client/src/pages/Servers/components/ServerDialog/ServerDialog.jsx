@@ -148,6 +148,15 @@ export const ServerDialog = ({ open, onClose, currentFolderId, currentOrganizati
         if (!fieldConfig.showKeyboardLayout) {
             delete finalConfig.keyboardLayout;
         }
+
+        if (!fieldConfig.showConnectionHooks) {
+            delete finalConfig.preLocalCommand;
+            delete finalConfig.preRemoteCommand;
+            delete finalConfig.preOrder;
+            delete finalConfig.afterLocalCommand;
+            delete finalConfig.afterRemoteCommand;
+            delete finalConfig.afterOrder;
+        }
         
         return finalConfig;
     };
@@ -266,7 +275,7 @@ export const ServerDialog = ({ open, onClose, currentFolderId, currentOrganizati
         if (!open) return;
 
         const submitOnEnter = (event) => {
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && event.target?.tagName !== "TEXTAREA" && event.target?.tagName !== "BUTTON") {
                 handleSubmit();
             }
         };

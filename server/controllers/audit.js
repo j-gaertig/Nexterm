@@ -54,6 +54,8 @@ const AUDIT_ACTIONS = {
 
     SCRIPT_EXECUTE: "script.execute",
 
+    HOOK_EXECUTE: "entry.hook_execute",
+
     AI_COMMAND: "ai.command",
     AI_FILE_WRITE: "ai.file_write",
     AI_FILE_DELETE: "ai.file_delete",
@@ -102,6 +104,8 @@ const ACTION_LABELS = {
     "identity.credentials_access": "Identity credentials accessed",
 
     "script.execute": "Script executed",
+
+    "entry.hook_execute": "Connection hook executed",
 
     "ai.command": "AI ran a command",
     "ai.file_write": "AI wrote a file",
@@ -152,6 +156,7 @@ const getOrgAuditSettings = async (organizationId) => {
 
 const shouldAudit = (action, settings) => {
     if (!settings) return true;
+    if (action === AUDIT_ACTIONS.HOOK_EXECUTE) return true;
     if (action === AUDIT_ACTIONS.IDENTITY_CREDENTIALS_ACCESS) return settings.enableIdentityCredentialsAccessAudit;
 
     const checks = [

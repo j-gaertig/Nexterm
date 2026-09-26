@@ -1712,6 +1712,22 @@
           "removeTooltip": "Remove jump host",
           "noServersAvailable": "No SSH servers available for jump hosts. Create SSH servers first."
         },
+        "hooks": {
+          "pre": {
+            "title": "Pre-Connect Commands",
+            "description": "Run before the SSH connection is established. A failing engine command aborts the connection."
+          },
+          "after": {
+            "title": "Post-Disconnect Commands",
+            "description": "Run after the SSH session has ended. Failures are only logged."
+          },
+          "localBadge": "ENGINE",
+          "remoteBadge": "TARGET",
+          "localHint": "Runs on the engine host",
+          "remoteHint": "Runs on the target server",
+          "unknownEngineHint": "Selected engine (ID {{engine}}) is unknown or offline",
+          "swapTooltip": "Swap execution order"
+        },
         "monitoring": {
           "title": "Enable Performance Monitoring",
           "description": "Collect CPU, memory, disk, and network metrics for this server"

@@ -22,6 +22,9 @@ enum MessageType : byte {
     ExecBatch = 32,
     ExecBatchResult = 33,
 
+    HostExec = 34,
+    HostExecResult = 35,
+
     PortCheck = 40,
     PortCheckResult = 41,
 
@@ -170,6 +173,22 @@ table ExecBatchResult {
     results: [ExecBatchEntry];
 }
 
+table HostExec {
+    request_id: string;
+    command: string;
+    timeout_ms: uint32;
+}
+
+table HostExecResult {
+    request_id: string;
+    success: bool;
+    stdout_data: string;
+    stderr_data: string;
+    exit_code: int32;
+    error_message: string;
+    truncated: bool;
+}
+
 table ConnectionReady {
     session_id: string;
     connection_id: string;
@@ -258,6 +277,8 @@ table Envelope {
     exec_command_result: ExecCommandResult;
     exec_batch: ExecBatch;
     exec_batch_result: ExecBatchResult;
+    host_exec: HostExec;
+    host_exec_result: HostExecResult;
     port_check: PortCheck;
     port_check_result: PortCheckResult;
     http_fetch: HttpFetch;

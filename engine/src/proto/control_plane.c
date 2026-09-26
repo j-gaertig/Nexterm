@@ -2,6 +2,7 @@
 #include "io.h"
 #include "session.h"
 #include "connection.h"
+#include "host_exec.h"
 #include "ssh.h"
 #include "telnet.h"
 #include "sftp.h"
@@ -435,6 +436,31 @@ static void handle_exec_batch(nexterm_control_plane_t* cp,
     free(commands);
 }
 
+static void handle_host_exec(nexterm_control_plane_t* cp,
+                             Nexterm_ControlPlane_Envelope_table_t envelope) {
+    Nexterm_ControlPlane_HostExec_table_t exec_msg =
+        Nexterm_ControlPlane_Envelope_host_exec(envelope);
+    if (!exec_msg) {
+        LOG_WARN("Invalid HostExec message");
+        return;
+    }
+
+    const char* req_id = Nexterm_ControlPlane_HostExec_request_id(exec_msg);
+    const char* command = Nexterm_ControlPlane_HostExec_command(exec_msg);
+    uint32_t timeout_ms = Nexterm_ControlPlane_HostExec_timeout_ms(exec_msg);
+
+    if (!req_id || req_id[0] == '\0' || !command || command[0] == '\0') {
+        LOG_WARN("HostExec: missing required fields");
+        return;
+    }
+
+    if (nexterm_host_exec(cp, req_id, command, timeout_ms) == -1) {
+        nexterm_cp_send_host_exec_result(cp, req_id, false,
+                                         NULL, NULL, -1,
+                                         "Failed to start host command", false);
+    }
+}
+
 static bool check_port_open(const char* host, uint16_t port, uint32_t timeout_ms) {
     struct addrinfo hints = {0};
     hints.ai_family = AF_UNSPEC;
@@ -651,6 +677,9 @@ static void handle_message(nexterm_control_plane_t* cp, const uint8_t* buf) {
         case Nexterm_ControlPlane_MessageType_ExecBatch:
             handle_exec_batch(cp, envelope);
             break;
+        case Nexterm_ControlPlane_MessageType_HostExec:
+            handle_host_exec(cp, envelope);
+            break;
         case Nexterm_ControlPlane_MessageType_PortCheck:
             handle_port_check(cp, envelope);
             break;
@@ -822,16 +851,20 @@ int nexterm_cp_start(nexterm_control_plane_t* cp) {
 }
 
 void nexterm_cp_stop(nexterm_control_plane_t* cp) {
-    if (!cp->running) return;
-
-    LOG_INFO("Stopping control plane client");
+    bool was_running = cp->running;
     cp->running = false;
 
     if (cp->sock_fd >= 0)
         shutdown(cp->sock_fd, SHUT_RDWR);
 
-    pthread_join(cp->read_thread, NULL);
-    pthread_join(cp->keepalive_thread, NULL);
+    if (was_running) {
+        pthread_join(cp->read_thread, NULL);
+        pthread_join(cp->keepalive_thread, NULL);
+    }
+
+    nexterm_host_exec_wait_idle();
+
+    LOG_INFO("Stopping control plane client");
 
     if (cp->ssl) {
         nexterm_tls_cleanup(cp->ssl);
@@ -1056,6 +1089,40 @@ int nexterm_cp_send_exec_batch_result(nexterm_control_plane_t* cp,
     }
 
     Nexterm_ControlPlane_Envelope_exec_batch_result_end(&builder);
+    Nexterm_ControlPlane_Envelope_end_as_root(&builder);
+
+    return cp_send(cp, &builder);
+}
+
+int nexterm_cp_send_host_exec_result(nexterm_control_plane_t* cp,
+                                     const char* request_id,
+                                     bool success,
+                                     const char* stdout_data,
+                                     const char* stderr_data,
+                                     int32_t exit_code,
+                                     const char* error_message,
+                                     bool truncated) {
+    flatcc_builder_t builder;
+    flatcc_builder_init(&builder);
+
+    Nexterm_ControlPlane_Envelope_start_as_root(&builder);
+    Nexterm_ControlPlane_Envelope_msg_type_add(&builder,
+        Nexterm_ControlPlane_MessageType_HostExecResult);
+
+    Nexterm_ControlPlane_Envelope_host_exec_result_start(&builder);
+    Nexterm_ControlPlane_HostExecResult_request_id_create_str(&builder, request_id);
+    Nexterm_ControlPlane_HostExecResult_success_add(&builder, success);
+    Nexterm_ControlPlane_HostExecResult_exit_code_add(&builder, exit_code);
+    Nexterm_ControlPlane_HostExecResult_truncated_add(&builder, truncated);
+
+    if (stdout_data)
+        Nexterm_ControlPlane_HostExecResult_stdout_data_create_str(&builder, stdout_data);
+    if (stderr_data)
+        Nexterm_ControlPlane_HostExecResult_stderr_data_create_str(&builder, stderr_data);
+    if (error_message)
+        Nexterm_ControlPlane_HostExecResult_error_message_create_str(&builder, error_message);
+
+    Nexterm_ControlPlane_Envelope_host_exec_result_end(&builder);
     Nexterm_ControlPlane_Envelope_end_as_root(&builder);
 
     return cp_send(cp, &builder);

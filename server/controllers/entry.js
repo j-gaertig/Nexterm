@@ -104,6 +104,18 @@ const validateJumpHosts = async (accountId, jumpHosts) => {
     return { valid: true };
 };
 
+const HOOK_CONFIG_KEYS = ["preLocalCommand", "preRemoteCommand", "preOrder", "afterLocalCommand", "afterRemoteCommand", "afterOrder"];
+
+const validateHookProtocol = (config, effectiveProtocol) => {
+    if (!config || effectiveProtocol === "ssh") return { valid: true };
+    for (const key of HOOK_CONFIG_KEYS) {
+        if (config[key] !== undefined && String(config[key]).trim() !== "") {
+            return { valid: false, error: { code: 400, message: "Connection hooks are only supported for SSH servers" } };
+        }
+    }
+    return { valid: true };
+};
+
 module.exports.createEntry = async (accountId, configuration) => {
     let folder = null;
     if (configuration.folderId) {
@@ -128,6 +140,9 @@ module.exports.createEntry = async (accountId, configuration) => {
         const validationResult = await validateJumpHosts(accountId, configuration.config.jumpHosts);
         if (!validationResult.valid) return validationResult.error;
     }
+
+    const hookCheck = validateHookProtocol(configuration.config, configuration.type && configuration.type !== "server" ? configuration.type : configuration.config?.protocol);
+    if (!hookCheck.valid) return hookCheck.error;
 
     const organizationId = folder?.folder?.organizationId || configuration.organizationId || null;
 
@@ -248,6 +263,13 @@ module.exports.editEntry = async (accountId, entryId, configuration) => {
     if (configuration.config?.jumpHosts !== undefined) {
         const validationResult = await validateJumpHosts(accountId, configuration.config.jumpHosts || []);
         if (!validationResult.valid) return validationResult.error;
+    }
+
+    if (configuration.config !== undefined || configuration.type !== undefined) {
+        const mergedConfig = { ...(entry.config || {}), ...(configuration.config || {}) };
+        const effectiveType = configuration.type ?? entry.type;
+        const hookCheck = validateHookProtocol(mergedConfig, effectiveType === "server" ? mergedConfig.protocol : effectiveType);
+        if (!hookCheck.valid) return hookCheck.error;
     }
 
     delete configuration.organizationId;

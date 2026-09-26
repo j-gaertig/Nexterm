@@ -10,6 +10,7 @@ const { resolveIdentity } = require("../utils/identityResolver");
 const { getScript } = require("../controllers/script");
 const OrganizationMember = require("../models/OrganizationMember");
 const { ScriptLayer } = require("./ScriptLayer");
+const { getEntryProtocol, getPreOrder, runPreEngineHook, runPreRemoteHook } = require("./ConnectionHooks");
 const { SessionType } = require("./generated/control_plane_generated");
 const controlPlane = require("./controlPlane/ControlPlaneServer");
 const { isRecordingEnabled } = require("../utils/recordingService");
@@ -52,8 +53,6 @@ const extractIdentity = (identityResult) => {
 };
 
 const FILE_TRANSFER_PORTS = { sftp: 22, ftp: 21, ftps: 21 };
-
-const getEntryProtocol = (entry) => (entry.type === "server" ? entry.config?.protocol : entry.type);
 
 const getHostPort = (entry, defaultPort = 22) => {
     const host = entry.config?.ip;
@@ -261,10 +260,29 @@ const createSSHConnectionForSession = async (sessionId, entry, identity, organiz
         const { host, port } = getHostPort(entry);
         const params = buildSSHParams(identity, credentials);
         const jumpHosts = await resolveJumpHosts(entry);
-
-        const dataSocket = await openEngineSession(
+        const accountId = session.accountId;
+        const openSsh = () => openEngineSession(
             sessionId, SessionType.SSH, host, port, params, jumpHosts, entry.config?.engineId
         );
+
+        let dataSocket;
+        try {
+            if (getPreOrder(entry) === "remote-first") {
+                dataSocket = await openSsh();
+                await runPreRemoteHook(entry, dataSocket, accountId);
+                await runPreEngineHook(entry, accountId);
+            } else {
+                await runPreEngineHook(entry, accountId);
+                dataSocket = await openSsh();
+                await runPreRemoteHook(entry, dataSocket, accountId);
+            }
+        } catch (err) {
+            if (dataSocket) {
+                try { dataSocket.destroy(); } catch {}
+                try { controlPlane.closeSession(sessionId, entry.config?.engineId || null); } catch {}
+            }
+            throw err;
+        }
 
         await SessionManager.initRecording(sessionId, organizationId);
 
@@ -302,7 +320,7 @@ const createSSHConnectionForSession = async (sessionId, entry, identity, organiz
                 logger.warn("Ignoring startPath containing control characters", { sessionId });
             } else {
                 const quoted = `'${raw.replace(/'/g, `'\\''`)}'`;
-                dataSocket.write(`cd ${quoted}\n`);
+                dataSocket.write(`cd ${quoted}\r`);
             }
         }
 
@@ -321,7 +339,7 @@ const createTelnetConnectionForSession = async (sessionId, entry, organizationId
     if (!ip) throw new Error("Missing host configuration");
 
     const dataSocket = await openEngineSession(
-        sessionId, SessionType.Telnet, ip, port, {}, entry.config?.engineId
+        sessionId, SessionType.Telnet, ip, port, {}, [], entry.config?.engineId
     );
 
     await SessionManager.initRecording(sessionId, organizationId);
@@ -481,7 +499,7 @@ const prepareWebSession = async (sessionId, entry, identity, organizationId) => 
 const prepareGuacamoleSession = async (sessionId, entry, identity, organizationId) => {
     const session = requireSession(sessionId);
     requireEngine();
-    const protocol = entry.type === "server" ? entry.config?.protocol : entry.type;
+    const protocol = getEntryProtocol(entry);
     const cfg = entry.config || {};
 
     let params;

@@ -7,6 +7,7 @@ const controlPlane = require("../lib/controlPlane/ControlPlaneServer");
 const { buildSSHParams, resolveJumpHosts } = require("../lib/ConnectionService");
 const { hasResourcePermission } = require("../utils/permission");
 const { Permission } = require("../permissions/registry");
+const { safeCloseWs } = require("../utils/wsClose");
 
 module.exports = async (ws, req) => {
     const context = await wsAuth(ws, req);
@@ -83,7 +84,7 @@ module.exports = async (ws, req) => {
         });
         dataSocket.on("error", (err) => {
             logger.error(`Tunnel data socket error`, { error: err.message });
-            ws.close(4005, `Stream error: ${err.message}`);
+            safeCloseWs(ws, 4005, `Stream error: ${err.message}`);
         });
 
         ws.on("message", (data) => {
@@ -111,7 +112,7 @@ module.exports = async (ws, req) => {
 
     } catch (error) {
         logger.error(`Tunnel setup failed`, { error: error.message, stack: error.stack });
-        ws.close(4004, `Tunnel setup failed: ${error.message}`);
+        safeCloseWs(ws, 4004, `Tunnel setup failed: ${error.message}`);
         cleanup();
     }
 };

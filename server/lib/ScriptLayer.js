@@ -70,7 +70,7 @@ class ScriptLayer {
     writeNextCommand() {
         if (this.commandIndex < this.commandQueue.length) {
             const cmd = this.commandQueue[this.commandIndex++];
-            this.stream.write(cmd + "\n");
+            this.stream.write(cmd + "\r");
             
             if (this.commandIndex < this.commandQueue.length) {
                 setTimeout(() => this.writeNextCommand(), 50);
@@ -136,7 +136,7 @@ class ScriptLayer {
             try {
                 const data = JSON.parse(str.slice(1));
                 if (data.type === MSG.INPUT_RESPONSE && this.pending) {
-                    this.stream.write((data.value || this.pending.default || "") + "\n");
+                    this.stream.write((data.value || this.pending.default || "") + "\r");
                     this.pending = null;
                 } else if (data.type === MSG.INPUT_CANCELLED) {
                     this.stream.write("\x03");

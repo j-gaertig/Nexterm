@@ -13,7 +13,31 @@ const configValidation = Joi.object({
     macAddress: Joi.string().pattern(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/).allow("").optional(),
     wakeOnLanEnabled: Joi.boolean().optional(),
     wolBroadcastAddress: Joi.string().ip({ version: ['ipv4'] }).allow("").optional(),
-}).unknown(true);
+    preLocalCommand: Joi.string().allow("").max(2000).optional(),
+    preRemoteCommand: Joi.string().allow("").max(2000).optional(),
+    preOrder: Joi.string().valid("local-first", "remote-first").optional(),
+    afterLocalCommand: Joi.string().allow("").max(2000).optional(),
+    afterRemoteCommand: Joi.string().allow("").max(2000).optional(),
+    afterOrder: Joi.string().valid("local-first", "remote-first").optional(),
+}).unknown(true).custom((value, helpers) => {
+    if (value.protocol && value.protocol !== "ssh") {
+        for (const key of ["preLocalCommand", "preRemoteCommand", "preOrder", "afterLocalCommand", "afterRemoteCommand", "afterOrder"]) {
+            if (value[key] !== undefined && String(value[key]).trim() !== "") {
+                return helpers.error("config.hooksNonSsh", { key });
+            }
+        }
+    }
+    if (typeof value.preRemoteCommand === "string" && /[\r\n\x00]/.test(value.preRemoteCommand)) {
+        return helpers.error("config.hookControlChars");
+    }
+    if (typeof value.afterRemoteCommand === "string" && /[\r\n\x00]/.test(value.afterRemoteCommand)) {
+        return helpers.error("config.hookControlChars");
+    }
+    return value;
+}).messages({
+    "config.hooksNonSsh": "Connection hooks are only supported for SSH servers",
+    "config.hookControlChars": "Remote hook commands must not contain control characters",
+});
 
 module.exports.createServerValidation = Joi.object({
     name: Joi.string().required(),
