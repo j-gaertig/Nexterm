@@ -5,10 +5,11 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:flutter_material_design_icons/flutter_material_design_icons.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../widgets/connection_loader.dart';
 import 'package:http/http.dart' as http;
@@ -530,7 +531,16 @@ class _SftpRendererState extends State<SftpRenderer> {
     );
   }
 
-  static const int _maxBulkBytes = 25 * 1024 * 1024;
+  static const MethodChannel _revealChannel =
+      MethodChannel('nexterm/downloads');
+
+  Uri _multiDownloadUri() {
+    return Uri.parse(
+      '${ApiConfig.baseUrl}/entries/sftp/multi'
+      '?sessionId=${Uri.encodeComponent(_sessionId)}'
+      '&sessionToken=${Uri.encodeComponent(widget.token)}',
+    );
+  }
 
   String _safeFileName(String name) {
     var s = name.replaceAll(RegExp(r'[\x00-\x1F\x7F<>:"/\\|?*]'), '_').trim();
@@ -600,114 +610,154 @@ class _SftpRendererState extends State<SftpRenderer> {
     } catch (_) {}
   }
 
-  void _showSaveCancelled() {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Save cancelled')),
-    );
-  }
-
-  String _mimeTypeFor(String fileName) {
-    final dot = fileName.lastIndexOf('.');
-    final ext =
-        dot > 0 ? fileName.substring(dot + 1).toLowerCase() : '';
-    switch (ext) {
-      case 'pdf':
-        return 'application/pdf';
-      case 'zip':
-        return 'application/zip';
-      case 'json':
-        return 'application/json';
-      case 'txt':
-      case 'log':
-      case 'md':
-        return 'text/plain';
-      case 'csv':
-        return 'text/csv';
-      case 'html':
-      case 'htm':
-        return 'text/html';
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'svg':
-        return 'image/svg+xml';
-      case 'mp4':
-        return 'video/mp4';
-      case 'mov':
-        return 'video/quicktime';
-      case 'mkv':
-        return 'video/x-matroska';
-      case 'mp3':
-        return 'audio/mpeg';
-      case 'wav':
-        return 'audio/wav';
-      case 'ogg':
-        return 'audio/ogg';
-      default:
-        return 'application/octet-stream';
+  Future<File> _streamPostToTemp(
+    Uri url,
+    Map<String, dynamic> body,
+    String fileName,
+  ) async {
+    final client = http.Client();
+    File? tempFile;
+    try {
+      final request = http.Request('POST', url);
+      request.headers['User-Agent'] = ApiClient.userAgent;
+      request.headers['Content-Type'] = 'application/json';
+      request.body = json.encode(body);
+      final streamed = await client
+          .send(request)
+          .timeout(const Duration(seconds: 60));
+      if (streamed.statusCode != 200) {
+        throw Exception('HTTP ${streamed.statusCode}');
+      }
+      final tempDir = await getTemporaryDirectory();
+      final safeName = _safeFileName(fileName);
+      tempFile = File(
+        '${tempDir.path}/nexterm_dl_${DateTime.now().microsecondsSinceEpoch}_$safeName',
+      );
+      final sink = tempFile.openWrite();
+      try {
+        await streamed.stream
+            .pipe(sink)
+            .timeout(const Duration(minutes: 10));
+      } catch (_) {
+        try {
+          await sink.close();
+        } catch (_) {}
+        await _deleteQuietly(tempFile);
+        tempFile = null;
+        rethrow;
+      }
+      return tempFile;
+    } catch (_) {
+      await _deleteQuietly(tempFile);
+      rethrow;
+    } finally {
+      client.close();
     }
   }
 
-  Future<void> _openSavedFile(String savedPath) async {
+  Future<String?> _saveTempOnce(File temp, String suggestedName) async {
     try {
-      final result = await OpenFilex.open(savedPath);
+      return await FlutterFileDialog.saveFile(
+        params: SaveFileDialogParams(
+          sourceFilePath: temp.path,
+          fileName: suggestedName,
+        ),
+      );
+    } finally {
+      await _deleteQuietly(temp);
+    }
+  }
+
+  Future<void> _showSavedLocation(String? savedValue) async {
+    if (savedValue == null || savedValue.isEmpty) return;
+    if (Platform.isIOS) {
+      try {
+        await launchUrl(
+          Uri.parse('shareddocuments://'),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {}
+      return;
+    }
+    try {
+      await _revealChannel.invokeMethod(
+        'showSavedDocument',
+        {'value': savedValue},
+      );
+    } catch (_) {}
+  }
+
+  void _showDownloadedMessage(String? savedValue) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('File(s)/Folder(s) downloaded'),
+        action: SnackBarAction(
+          label: 'Show',
+          onPressed: () => _showSavedLocation(savedValue),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadSingle(String remotePath, String suggestedName) async {
+    setState(() => _uploading = true);
+    File? temp;
+    try {
+      temp = await _streamToTemp(remotePath, suggestedName);
+      final saved = await _saveTempOnce(temp, suggestedName);
+      temp = null;
       if (!mounted) return;
-      if (result.type != ResultType.done) {
+      if (saved == null) return;
+      _showDownloadedMessage(saved);
+    } catch (e) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Saved to $savedPath (cannot open here)')),
+          SnackBar(content: Text('Download failed: $e')),
         );
       }
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savedPath')),
-      );
+    } finally {
+      await _deleteQuietly(temp);
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
   Future<void> _downloadFile(SftpEntry entry) async {
-    if (entry.isDir) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Folders cannot be downloaded')),
-        );
+    await _downloadSingle(_remotePath(entry.name), _safeFileName(entry.name));
+  }
+
+  Future<void> _downloadFolder(SftpEntry entry) async {
+    await _downloadSingle(
+      _remotePath(entry.name),
+      '${_safeFileName(entry.name)}.zip',
+    );
+  }
+
+  Future<void> _downloadMultiple(List<SftpEntry> entries) async {
+    if (entries.isEmpty) return;
+    if (entries.length == 1) {
+      final single = entries.first;
+      if (single.isDir) {
+        await _downloadFolder(single);
+      } else {
+        await _downloadFile(single);
       }
       return;
     }
     setState(() => _uploading = true);
     File? temp;
     try {
-      final targetName = _safeFileName(entry.name);
-      temp = await _streamToTemp(_remotePath(entry.name), targetName);
-      final savedPath = await FlutterFileDialog.saveFile(
-        params: SaveFileDialogParams(
-          sourceFilePath: temp.path,
-          fileName: targetName,
-        ),
+      final paths = entries.map((e) => _remotePath(e.name)).toList();
+      temp = await _streamPostToTemp(
+        _multiDownloadUri(),
+        {'paths': paths},
+        'files.zip',
       );
-      await _deleteQuietly(temp);
+      final saved = await _saveTempOnce(temp, 'files.zip');
       temp = null;
       if (!mounted) return;
-      if (savedPath == null) {
-        _showSaveCancelled();
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Saved to $savedPath'),
-          action: SnackBarAction(
-            label: 'Open',
-            onPressed: () => _openSavedFile(savedPath),
-          ),
-        ),
-      );
+      if (saved == null) return;
+      _showDownloadedMessage(saved);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -718,195 +768,6 @@ class _SftpRendererState extends State<SftpRenderer> {
       await _deleteQuietly(temp);
       if (mounted) setState(() => _uploading = false);
     }
-  }
-
-  String _numberedFileName(String name, int attempt) {
-    final dot = name.lastIndexOf('.');
-    if (dot > 0) {
-      return '${name.substring(0, dot)} ($attempt)${name.substring(dot)}';
-    }
-    return '$name ($attempt)';
-  }
-
-  Future<String> _saveToPickedDir(
-    DirectoryLocation dir,
-    Uint8List bytes,
-    String fileName,
-  ) async {
-    var attemptName = fileName;
-    for (var attempt = 0; attempt < 10; attempt++) {
-      final out = await FlutterFileDialog.saveFileToDirectory(
-        directory: dir,
-        data: bytes,
-        fileName: attemptName,
-        mimeType: _mimeTypeFor(attemptName),
-        replace: false,
-      );
-      if (out != null) return out;
-      attemptName = _numberedFileName(fileName, attempt + 1);
-    }
-    throw Exception('Could not find a free file name');
-  }
-
-  Future<void> _downloadMultiple(List<SftpEntry> entries) async {
-    final skippedDirs = entries.where((e) => e.isDir).length;
-    final fileEntries = entries.where((e) => !e.isDir).toList();
-    if (fileEntries.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No files selected for download')),
-        );
-      }
-      return;
-    }
-
-    setState(() => _uploading = true);
-    try {
-      if (!await FlutterFileDialog.isPickDirectorySupported()) {
-        await _downloadMultipleFallback(fileEntries,
-            skippedDirs: skippedDirs);
-        return;
-      }
-      final pickedDir = await FlutterFileDialog.pickDirectory();
-      if (pickedDir == null) {
-        if (mounted) _showSaveCancelled();
-        return;
-      }
-
-      int saved = 0;
-      int failed = 0;
-      int cancelled = 0;
-      String? lastSavedPath;
-      String? firstError;
-
-      for (final entry in fileEntries) {
-        File? temp;
-        try {
-          final targetName = _safeFileName(entry.name);
-          temp = await _streamToTemp(_remotePath(entry.name), targetName);
-          if (await temp.length() > _maxBulkBytes) {
-            final outSingle = await FlutterFileDialog.saveFile(
-              params: SaveFileDialogParams(
-                sourceFilePath: temp.path,
-                fileName: targetName,
-              ),
-            );
-            if (outSingle != null) {
-              saved++;
-              lastSavedPath = outSingle;
-            } else {
-              cancelled++;
-              break;
-            }
-            continue;
-          }
-          final bytes = await temp.readAsBytes();
-          final outPath = await _saveToPickedDir(
-            pickedDir,
-            bytes,
-            targetName,
-          );
-          saved++;
-          lastSavedPath = outPath;
-        } catch (e) {
-          failed++;
-          firstError ??= e.toString();
-        } finally {
-          await _deleteQuietly(temp);
-        }
-      }
-
-      if (!mounted) return;
-      String msg;
-      if (saved == 0 && failed == 0 && cancelled > 0) {
-        msg = 'Save cancelled';
-      } else {
-        msg = failed > 0
-            ? 'Saved $saved file(s), $failed failed'
-            : 'Saved $saved file(s)';
-        if (firstError != null && failed > 0) msg += ': $firstError';
-        if (cancelled > 0) msg += ' ($cancelled cancelled)';
-      }
-      if (skippedDirs > 0) {
-        msg += ' ($skippedDirs folder(s) skipped)';
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          action: (saved == 1 && lastSavedPath != null)
-              ? SnackBarAction(
-                  label: 'Open',
-                  onPressed: () => _openSavedFile(lastSavedPath!),
-                )
-              : null,
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Download failed: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _uploading = false);
-    }
-  }
-
-  Future<void> _downloadMultipleFallback(List<SftpEntry> fileEntries,
-      {int skippedDirs = 0}) async {
-    int saved = 0;
-    int failed = 0;
-    int cancelled = 0;
-    String? lastSavedPath;
-    String? firstError;
-    for (final entry in fileEntries) {
-      File? temp;
-      try {
-        final targetName = _safeFileName(entry.name);
-        temp = await _streamToTemp(_remotePath(entry.name), targetName);
-        final outPath = await FlutterFileDialog.saveFile(
-          params: SaveFileDialogParams(
-            sourceFilePath: temp.path,
-            fileName: targetName,
-          ),
-        );
-        if (outPath != null) {
-          saved++;
-          lastSavedPath = outPath;
-        } else {
-          cancelled++;
-          break;
-        }
-      } catch (e) {
-        failed++;
-        firstError ??= e.toString();
-      } finally {
-        await _deleteQuietly(temp);
-      }
-    }
-    if (!mounted) return;
-    String msg;
-    if (saved == 0 && failed == 0 && cancelled > 0) {
-      msg = 'Save cancelled';
-    } else {
-      msg = failed > 0
-          ? 'Saved $saved file(s), $failed failed'
-          : 'Saved $saved file(s)';
-      if (firstError != null && failed > 0) msg += ': $firstError';
-      if (cancelled > 0) msg += ' ($cancelled cancelled)';
-    }
-    if (skippedDirs > 0) msg += ' ($skippedDirs folder(s) skipped)';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        action: (saved == 1 && lastSavedPath != null)
-            ? SnackBarAction(
-                label: 'Open',
-                onPressed: () => _openSavedFile(lastSavedPath!),
-              )
-            : null,
-      ),
-    );
   }
 
   void _cancelSelection() {
@@ -1298,12 +1159,18 @@ class _SftpRendererState extends State<SftpRenderer> {
               ]),
             ),
             const Divider(height: 1),
-            if (!entry.isDir)
-              ListTile(
-                leading: Icon(MdiIcons.downloadOutline),
-                title: const Text('Download'),
-                onTap: () { Navigator.pop(ctx); _downloadFile(entry); },
-              ),
+            ListTile(
+              leading: Icon(MdiIcons.downloadOutline),
+              title: const Text('Download'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (entry.isDir) {
+                  _downloadFolder(entry);
+                } else {
+                  _downloadFile(entry);
+                }
+              },
+            ),
             ListTile(
               leading: Icon(MdiIcons.pencilOutline),
               title: const Text('Rename'),
