@@ -14,6 +14,7 @@ export const ServerSearch = ({search, setSearch}) => {
 
     useEffect(() => {
         const handleKeyDown = (e) => {
+            if (e.target?.closest?.(".file-editor-window, .monaco-editor")) return;
             if (searchKeybind && matchesKeybind(e, searchKeybind)) {
                 e.preventDefault();
                 inputRef.current.focus();

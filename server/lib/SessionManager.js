@@ -9,16 +9,26 @@ const { safeCloseWs } = require("../utils/wsClose");
 const MAX_LOG_BUFFER_SIZE = 200 * 1024;
 const sessions = new Map();
 const shareIndex = new Map();
-const CONTROL_PLANE_TYPES = new Set(["ssh", "sftp", "guac", "pve-lxc", "telnet"]);
+const CONTROL_PLANE_TYPES = new Set(["ssh", "telnet", "sftp", "guac", "pve-lxc"]);
 
 const TYPING_DURATION_MS = 1500;
 const PRESENCE_THROTTLE_MS = 250;
 
-module.exports.create = (accountId, entryId, configuration, connectionReason = null, tabId = null, browserId = null, auditLogId = null, organizationId = null) => {
-    const sessionId = uuidv4();
+module.exports.create = ({
+    accountId,
+    entryId,
+    configuration,
+    connectionReason = null,
+    tabId = null,
+    browserId = null,
+    auditLogId = null,
+    organizationId = null,
+    sessionId = uuidv4(),
+    connectionGeneration = 0,
+}) => {
     const session = {
         sessionId, accountId, entryId, configuration, connectionReason,
-        tabId, browserId, auditLogId, organizationId,
+        tabId, browserId, auditLogId, organizationId, connectionGeneration,
         isHibernated: false,
         createdAt: new Date(),
         lastActivity: new Date(),
@@ -335,6 +345,13 @@ module.exports.markFailed = (sessionId, reason) => {
     failedSessions.set(sessionId, { reason: reason || "Connection failed", timeout });
 };
 
+module.exports.clearFailedReason = (sessionId) => {
+    const entry = failedSessions.get(sessionId);
+    if (!entry) return;
+    clearTimeout(entry.timeout);
+    failedSessions.delete(sessionId);
+};
+
 module.exports.consumeFailedReason = (sessionId) => {
     const entry = failedSessions.get(sessionId);
     if (!entry) return null;
@@ -365,7 +382,7 @@ module.exports.resume = (sessionId, tabId = null, browserId = null) => {
 
 const cleanupConnection = async (conn, sessionId) => {
     if (CONTROL_PLANE_TYPES.has(conn.type)) {
-        try { require("./controlPlane/ControlPlaneServer").closeSession(sessionId); } catch {}
+        try { await require("./controlPlane/ControlPlaneServer").closeSessionAndWait(sessionId); } catch {}
     }
     for (const s of [conn.dataSocket, conn.socket]) {
         if (!s) continue;
@@ -386,47 +403,53 @@ const cleanupConnection = async (conn, sessionId) => {
     }
 };
 
-module.exports.remove = async (sessionId, options = {}) => {
+module.exports.remove = (sessionId, options = {}) => {
     const session = module.exports.get(sessionId);
-    if (!session || session._removing) return false;
+    if (!session) return Promise.resolve(false);
+    if (session._removePromise) return session._removePromise;
     session._removing = true;
     const wasSshSession = session.masterConnection?.type === "ssh";
 
-    const { code = 1000, reason = "Session terminated" } = options;
-    closeAllWebSockets(sessionId, code, reason);
-    if (session.recording) {
-        try {
-            await finalizeTerminalRecording(sessionId);
-        } catch (err) {
-            logger.warn("Failed to finalize terminal recording", { sessionId, error: err.message });
+    const { code = 1000, reason = "Session terminated", broadcast = true, skipAfterHooks = false } = options;
+    session._removePromise = (async () => {
+        closeAllWebSockets(sessionId, code, reason);
+        if (session.recording) {
+            try {
+                await finalizeTerminalRecording(sessionId);
+            } catch (err) {
+                logger.warn("Failed to finalize terminal recording", { sessionId, error: err.message });
+            }
         }
-    }
-    if (session.masterConnection) {
-        await cleanupConnection(session.masterConnection, sessionId);
-        session.masterConnection = null;
-    }
-    if (session.shareId) shareIndex.delete(session.shareId);
+        if (session.masterConnection) {
+            await cleanupConnection(session.masterConnection, sessionId);
+            session.masterConnection = null;
+        }
+        if (session.shareId) shareIndex.delete(session.shareId);
 
-    if (session._presenceTimer) clearTimeout(session._presenceTimer);
-    for (const participant of session.participants.values()) clearTimeout(participant.typingTimer);
-    session.participants.clear();
+        if (session._presenceTimer) clearTimeout(session._presenceTimer);
+        for (const participant of session.participants.values()) clearTimeout(participant.typingTimer);
+        session.participants.clear();
 
-    const { accountId, organizationId } = session;
-    if (wasSshSession && !session._afterHooksDone) {
-        session._afterHooksDone = true;
-        const { runAfterHooks } = require("./ConnectionHooks");
-        runAfterHooks({
-            entryId: session.entryId,
-            accountId,
-            identityId: session.configuration?.identityId || null,
-            directIdentity: session.configuration?.directIdentity || null,
-        }).catch(() => {});
-    }
-    sessions.delete(sessionId);
-    logger.info("Session removed", { sessionId });
-    stateBroadcaster.broadcast("CONNECTIONS", { accountId });
-    if (organizationId) stateBroadcaster.broadcast("LIVE_SESSIONS", { organizationId });
-    return true;
+        const { accountId, organizationId } = session;
+        if (wasSshSession && !skipAfterHooks && !session._afterHooksDone) {
+            session._afterHooksDone = true;
+            const { runAfterHooks } = require("./ConnectionHooks");
+            runAfterHooks({
+                entryId: session.entryId,
+                accountId,
+                identityId: session.configuration?.identityId || null,
+                directIdentity: session.configuration?.directIdentity || null,
+            }).catch(() => {});
+        }
+        if (sessions.get(sessionId) === session) sessions.delete(sessionId);
+        logger.info("Session removed", { sessionId });
+        if (broadcast) {
+            stateBroadcaster.broadcast("CONNECTIONS", { accountId });
+            if (organizationId) stateBroadcaster.broadcast("LIVE_SESSIONS", { organizationId });
+        }
+        return true;
+    })();
+    return session._removePromise;
 };
 
 module.exports.updateActivity = (sessionId) => {

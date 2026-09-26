@@ -27,7 +27,7 @@ LT_PREREQ([2.2])
 LT_INIT([dlopen])
 
 AC_CONFIG_HEADER([config.h])
-AC_CONFIG_MACRO_DIR([m4])
+AC_CONFIG_MACRO_DIRS([m4])
 
 # Use TAP test driver for tests (part of automake)
 AC_REQUIRE_AUX_FILE([tap-driver.sh])
@@ -45,7 +45,10 @@ AC_CHECK_HEADERS([fcntl.h stdlib.h string.h sys/socket.h time.h sys/time.h syslo
 
 # Source characteristics
 AC_DEFINE([_GNU_SOURCE],   [1], [Uses GNU-specific APIs (if available)])
-AC_DEFINE([_XOPEN_SOURCE], [700], [Uses X/Open and POSIX APIs])
+AH_VERBATIM([_XOPEN_SOURCE],
+[#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif])
 AC_DEFINE([__BSD_VISIBLE], [1], [Uses BSD-specific APIs (if available)])
 
 # Check for availability of non-portable sched_getaffinity() function (one of

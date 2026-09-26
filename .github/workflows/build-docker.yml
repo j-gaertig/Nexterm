@@ -23,7 +23,7 @@ jobs:
         include:
           - platform_arch: amd64
             platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - platform_arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
@@ -36,15 +36,15 @@ jobs:
 
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -52,13 +52,13 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ matrix.image_name }}
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -77,7 +77,7 @@ jobs:
           touch "${{ runner.temp }}/digests/${{ matrix.slug }}/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digests-${{ matrix.slug }}-${{ matrix.platform_arch }}
           path: ${{ runner.temp }}/digests/${{ matrix.slug }}/
@@ -86,7 +86,7 @@ jobs:
 
   merge-components:
     name: "Merge Manifests (${{ matrix.slug }})"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-components
     strategy:
       matrix:
@@ -98,17 +98,17 @@ jobs:
 
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/digests/${{ matrix.slug }}
           pattern: digests-${{ matrix.slug }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -132,20 +132,20 @@ jobs:
         include:
           - platform_arch: amd64
             platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - platform_arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -153,13 +153,13 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/j-gaertig/nexterm-aio
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -179,7 +179,7 @@ jobs:
           touch "${{ runner.temp }}/digests/aio/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digests-aio-${{ matrix.platform_arch }}
           path: ${{ runner.temp }}/digests/aio/
@@ -188,22 +188,22 @@ jobs:
 
   merge-aio:
     name: "Merge Manifests (aio)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-aio
 
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/digests/aio
           pattern: digests-aio-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

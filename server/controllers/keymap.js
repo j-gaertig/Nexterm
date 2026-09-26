@@ -13,6 +13,7 @@ const DEFAULT_KEYMAPS = [
     { action: "paste", key: "ctrl+shift+v" },
     { action: "fullscreen", key: "f11" },
     { action: "paste-identity-password", key: "ctrl+shift+p" },
+    { action: "save-file", key: "ctrl+s" },
 ];
 
 module.exports.getKeymaps = async (accountId) => {

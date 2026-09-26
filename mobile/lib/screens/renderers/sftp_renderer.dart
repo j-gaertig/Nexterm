@@ -5,15 +5,18 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:flutter_material_design_icons/flutter_material_design_icons.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../widgets/connection_loader.dart';
 import 'package:http/http.dart' as http;
 
 import '../../models/sftp_entry.dart';
 import '../../services/api_config.dart';
+import '../../services/connection_service.dart';
 import '../../services/session_manager.dart';
 import '../../utils/api_client.dart';
 import '../../utils/sftp_settings.dart';
@@ -64,6 +67,25 @@ class _SftpRendererState extends State<SftpRenderer> {
   bool _initialized = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 5;
+  int _aliveResets = 0;
+  static const int _maxAliveResets = 3;
+  int _pickerDepth = 0;
+  bool _reconnectActive = false;
+  bool _quietLoop = false;
+  bool _connectionLostWhilePicking = false;
+  bool _quietReadyOnce = false;
+  final ScrollController _scrollController = ScrollController();
+
+  bool get _pickerOpen => _pickerDepth > 0;
+
+  void _enterPicker() {
+    _pickerDepth++;
+  }
+
+  void _exitPicker() {
+    if (_pickerDepth > 0) _pickerDepth--;
+  }
+
   bool _lastShowHiddenFiles = false;
   bool _lastSortFoldersFirst = true;
 
@@ -121,6 +143,10 @@ class _SftpRendererState extends State<SftpRenderer> {
       widget.session.sftpSubscription = channel.stream.listen(
         _processMessage,
         onError: (error) {
+          if (_pickerOpen) {
+            _connectionLostWhilePicking = true;
+            return;
+          }
           if (mounted) {
             setState(() {
               _errorMessage = 'Connection error: $error';
@@ -131,6 +157,10 @@ class _SftpRendererState extends State<SftpRenderer> {
           _attemptReconnect();
         },
         onDone: () {
+          if (_pickerOpen) {
+            _connectionLostWhilePicking = true;
+            return;
+          }
           if (mounted) setState(() => _connected = false);
           widget.session.isConnected = false;
           _attemptReconnect();
@@ -144,36 +174,86 @@ class _SftpRendererState extends State<SftpRenderer> {
     }
   }
 
-  Future<void> _attemptReconnect() async {
-    if (!mounted || _reconnectAttempts >= _maxReconnectAttempts) {
-      widget.onDisconnected?.call();
-      return;
+  Future<void> _attemptReconnect({bool quiet = false}) async {
+    _quietLoop = quiet;
+    if (_reconnectActive) return;
+    _reconnectActive = true;
+    try {
+      while (mounted) {
+        if (_pickerOpen) {
+          _connectionLostWhilePicking = true;
+          _quietReadyOnce = false;
+          return;
+        }
+        if (_reconnectAttempts >= _maxReconnectAttempts) {
+          final alive = await _serverSessionAlive();
+          if (!mounted) return;
+          if (_pickerOpen) {
+            _connectionLostWhilePicking = true;
+            _quietReadyOnce = false;
+            return;
+          }
+          if (alive && _aliveResets < _maxAliveResets) {
+            _aliveResets++;
+            _reconnectAttempts = 0;
+          } else {
+            _quietReadyOnce = false;
+            widget.onDisconnected?.call();
+            return;
+          }
+        }
+        _reconnectAttempts++;
+        final delay = Duration(seconds: _reconnectAttempts.clamp(1, 5));
+        await Future.delayed(delay);
+        if (!mounted) return;
+        if (_pickerOpen) {
+          _connectionLostWhilePicking = true;
+          _quietReadyOnce = false;
+          return;
+        }
+        if (await _reconnectNow()) return;
+      }
+    } finally {
+      _reconnectActive = false;
+      _quietLoop = false;
     }
+  }
 
-    _reconnectAttempts++;
-    final delay = Duration(seconds: _reconnectAttempts.clamp(1, 5));
-    await Future.delayed(delay);
-
-    if (!mounted) return;
-
+  Future<bool> _reconnectNow() async {
     final success = await widget.sessionManager.reconnectSftpSession(
       token: widget.token,
       session: widget.session,
     );
+    final quiet = _quietLoop;
+    _quietReadyOnce = quiet;
+    if (!mounted || !success) return false;
+    _reconnectAttempts = 0;
+    _aliveResets = 0;
+    _initialized = false;
+    widget.session.sftpSubscription = null;
+    setState(() {
+      _errorMessage = null;
+      if (!quiet) _loading = true;
+    });
+    _setupConnection();
+    return true;
+  }
 
-    if (!mounted) return;
-
-    if (success) {
-      _initialized = false;
-      widget.session.sftpSubscription = null;
-      setState(() {
-        _errorMessage = null;
-        _loading = true;
-      });
-      _setupConnection();
-    } else {
-      _attemptReconnect();
+  Future<bool> _serverSessionAlive() async {
+    try {
+      final sessions = await ConnectionService.listSessions(token: widget.token)
+          .timeout(const Duration(seconds: 10));
+      return sessions.any((s) => s['sessionId'] == _sessionId);
+    } catch (_) {
+      return true;
     }
+  }
+
+  Future<void> _recoverAfterPicker() async {
+    if (!mounted || _pickerOpen) return;
+    if (!_connectionLostWhilePicking) return;
+    _connectionLostWhilePicking = false;
+    _attemptReconnect(quiet: true);
   }
 
   void _processMessage(dynamic data) {
@@ -215,7 +295,9 @@ class _SftpRendererState extends State<SftpRenderer> {
         }
         widget.session.isConnected = true;
         _reconnectAttempts = 0;
-        _listDirectory(ready['path'] as String? ?? _rootPath);
+        final quiet = _quietReadyOnce;
+        _quietReadyOnce = false;
+        _listDirectory(ready['path'] as String? ?? _rootPath, silent: quiet);
         break;
       case _SftpOps.listFiles:
         _handleDirectoryListed(jsonPayload);
@@ -254,7 +336,7 @@ class _SftpRendererState extends State<SftpRenderer> {
         } catch (_) {}
         break;
       default:
-        _listDirectory(_currentPath);
+        _listDirectory(_currentPath, silent: true);
         break;
     }
   }
@@ -305,9 +387,9 @@ class _SftpRendererState extends State<SftpRenderer> {
     channel.sink.add(message);
   }
 
-  void _listDirectory(String path) {
+  void _listDirectory(String path, {bool silent = false}) {
     if (!mounted) return;
-    setState(() => _loading = true);
+    if (!silent || _entries.isEmpty) setState(() => _loading = true);
     _sendOperation(_SftpOps.listFiles, {'path': path});
   }
 
@@ -369,7 +451,7 @@ class _SftpRendererState extends State<SftpRenderer> {
     });
   }
 
-  void _refresh() => _listDirectory(_currentPath);
+  void _refresh() => _listDirectory(_currentPath, silent: true);
 
   void _onSftpSettingsChanged() {
     final settings = widget.sftpSettings;
@@ -489,7 +571,17 @@ class _SftpRendererState extends State<SftpRenderer> {
   }
 
   Future<void> _uploadFile() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    _enterPicker();
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    } catch (_) {
+      result = null;
+    } finally {
+      _exitPicker();
+      await _recoverAfterPicker();
+    }
+    if (!mounted) return;
     if (result == null || result.files.isEmpty) return;
 
     setState(() => _uploading = true);
@@ -503,7 +595,7 @@ class _SftpRendererState extends State<SftpRenderer> {
       try {
         final uploadUrl = Uri.parse(
           '${ApiConfig.baseUrl}/entries/sftp/upload'
-          '?sessionId=$_sessionId'
+      '?sessionId=${Uri.encodeComponent(_sessionId)}'
           '&path=${Uri.encodeComponent(remotePath)}'
           '&sessionToken=${Uri.encodeComponent(widget.token)}',
         );
@@ -538,50 +630,197 @@ class _SftpRendererState extends State<SftpRenderer> {
     }
   }
 
-  Future<http.Response?> _fetchFile(String remotePath) async {
-    final url = Uri.parse(
+  Uri _downloadUri(String remotePath) {
+    return Uri.parse(
       '${ApiConfig.baseUrl}/entries/sftp'
-      '?sessionId=$_sessionId'
+      '?sessionId=${Uri.encodeComponent(_sessionId)}'
       '&path=${Uri.encodeComponent(remotePath)}'
       '&sessionToken=${Uri.encodeComponent(widget.token)}',
     );
-    return http.get(url, headers: {'User-Agent': ApiClient.userAgent});
   }
 
-  Future<Directory> _getDownloadDir() async {
-    if (Platform.isAndroid) {
-      final dir = await getDownloadsDirectory();
-      if (dir != null) return dir;
+  static const MethodChannel _revealChannel =
+      MethodChannel('nexterm/downloads');
+
+  Uri _multiDownloadUri() {
+    return Uri.parse(
+      '${ApiConfig.baseUrl}/entries/sftp/multi'
+      '?sessionId=${Uri.encodeComponent(_sessionId)}'
+      '&sessionToken=${Uri.encodeComponent(widget.token)}',
+    );
+  }
+
+  String _safeFileName(String name) {
+    var s = name.replaceAll(RegExp(r'[\x00-\x1F\x7F<>:"/\\|?*]'), '_').trim();
+    s = s.replaceAll(RegExp(r'[. ]+$'), '');
+    if (s.isEmpty ||
+        s == '.' ||
+        s == '..' ||
+        RegExp(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$',
+                caseSensitive: false)
+            .hasMatch(s)) {
+      s = 'download';
     }
-    return await getApplicationDocumentsDirectory();
+    if (s.length > 100) {
+      final dot = s.lastIndexOf('.');
+      if (dot > 0 && s.length - dot <= 12) {
+        s = '${s.substring(0, 100 - (s.length - dot))}${s.substring(dot)}';
+      } else {
+        s = s.substring(0, 100);
+      }
+    }
+    return s;
   }
 
-  Future<void> _downloadFile(SftpEntry entry) async {
-    setState(() => _uploading = true);
+  Future<File> _streamToTemp(String remotePath, String fileName) async {
+    final client = http.Client();
+    File? tempFile;
     try {
-      final response = await _fetchFile(_remotePath(entry.name));
-      if (response == null || response.statusCode != 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Download failed: ${response?.statusCode}')),
-          );
-        }
-        return;
+      final request = http.Request('GET', _downloadUri(remotePath));
+      request.headers['User-Agent'] = ApiClient.userAgent;
+      final streamed = await client
+          .send(request)
+          .timeout(const Duration(seconds: 60));
+      if (streamed.statusCode != 200) {
+        throw Exception('HTTP ${streamed.statusCode}');
       }
-      final dir = await _getDownloadDir();
-      final file = await File('${dir.path}/${entry.name}')
-          .writeAsBytes(response.bodyBytes);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Saved to ${file.path}'),
-            action: SnackBarAction(
-              label: 'Open',
-              onPressed: () => OpenFilex.open(file.path),
-            ),
-          ),
+      final tempDir = await getTemporaryDirectory();
+      final safeName = _safeFileName(fileName);
+      tempFile = File(
+        '${tempDir.path}/nexterm_dl_${DateTime.now().microsecondsSinceEpoch}_$safeName',
+      );
+      final sink = tempFile.openWrite();
+      try {
+        await streamed.stream
+            .pipe(sink)
+            .timeout(const Duration(minutes: 10));
+      } catch (_) {
+        try {
+          await sink.close();
+        } catch (_) {}
+        await _deleteQuietly(tempFile);
+        tempFile = null;
+        rethrow;
+      }
+      return tempFile;
+    } catch (_) {
+      await _deleteQuietly(tempFile);
+      rethrow;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _deleteQuietly(File? file) async {
+    if (file == null) return;
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  Future<File> _streamPostToTemp(
+    Uri url,
+    Map<String, dynamic> body,
+    String fileName,
+  ) async {
+    final client = http.Client();
+    File? tempFile;
+    try {
+      final request = http.Request('POST', url);
+      request.headers['User-Agent'] = ApiClient.userAgent;
+      request.headers['Content-Type'] = 'application/json';
+      request.body = json.encode(body);
+      final streamed = await client
+          .send(request)
+          .timeout(const Duration(seconds: 60));
+      if (streamed.statusCode != 200) {
+        throw Exception('HTTP ${streamed.statusCode}');
+      }
+      final tempDir = await getTemporaryDirectory();
+      final safeName = _safeFileName(fileName);
+      tempFile = File(
+        '${tempDir.path}/nexterm_dl_${DateTime.now().microsecondsSinceEpoch}_$safeName',
+      );
+      final sink = tempFile.openWrite();
+      try {
+        await streamed.stream
+            .pipe(sink)
+            .timeout(const Duration(minutes: 10));
+      } catch (_) {
+        try {
+          await sink.close();
+        } catch (_) {}
+        await _deleteQuietly(tempFile);
+        tempFile = null;
+        rethrow;
+      }
+      return tempFile;
+    } catch (_) {
+      await _deleteQuietly(tempFile);
+      rethrow;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<String?> _saveTempOnce(File temp, String suggestedName) async {
+    _enterPicker();
+    try {
+      return await FlutterFileDialog.saveFile(
+        params: SaveFileDialogParams(
+          sourceFilePath: temp.path,
+          fileName: suggestedName,
+        ),
+      );
+    } finally {
+      _exitPicker();
+      await _deleteQuietly(temp);
+      await _recoverAfterPicker();
+    }
+  }
+
+  Future<void> _showSavedLocation(String? savedValue) async {
+    if (savedValue == null || savedValue.isEmpty) return;
+    if (Platform.isIOS) {
+      try {
+        await launchUrl(
+          Uri.parse('shareddocuments://'),
+          mode: LaunchMode.externalApplication,
         );
-      }
+      } catch (_) {}
+      return;
+    }
+    try {
+      await _revealChannel.invokeMethod(
+        'showSavedDocument',
+        {'value': savedValue},
+      );
+    } catch (_) {}
+  }
+
+  void _showDownloadedMessage(String? savedValue) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('File(s)/Folder(s) downloaded'),
+        action: SnackBarAction(
+          label: 'Show',
+          onPressed: () => _showSavedLocation(savedValue),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadSingle(String remotePath, String suggestedName) async {
+    setState(() => _uploading = true);
+    File? temp;
+    try {
+      temp = await _streamToTemp(remotePath, suggestedName);
+      final saved = await _saveTempOnce(temp, suggestedName);
+      temp = null;
+      if (!mounted) return;
+      if (saved == null) return;
+      _showDownloadedMessage(saved);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -589,47 +828,56 @@ class _SftpRendererState extends State<SftpRenderer> {
         );
       }
     } finally {
+      await _deleteQuietly(temp);
       if (mounted) setState(() => _uploading = false);
     }
   }
 
+  Future<void> _downloadFile(SftpEntry entry) async {
+    await _downloadSingle(_remotePath(entry.name), _safeFileName(entry.name));
+  }
+
+  Future<void> _downloadFolder(SftpEntry entry) async {
+    await _downloadSingle(
+      _remotePath(entry.name),
+      '${_safeFileName(entry.name)}.zip',
+    );
+  }
+
   Future<void> _downloadMultiple(List<SftpEntry> entries) async {
-    final fileEntries = entries.where((e) => !e.isDir).toList();
-    if (fileEntries.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No files selected for download')),
-        );
+    if (entries.isEmpty) return;
+    if (entries.length == 1) {
+      final single = entries.first;
+      if (single.isDir) {
+        await _downloadFolder(single);
+      } else {
+        await _downloadFile(single);
       }
       return;
     }
-
     setState(() => _uploading = true);
-    final dir = await _getDownloadDir();
-    int saved = 0;
-    int failed = 0;
-
-    for (final entry in fileEntries) {
-      try {
-        final response = await _fetchFile(_remotePath(entry.name));
-        if (response != null && response.statusCode == 200) {
-          await File('${dir.path}/${entry.name}')
-              .writeAsBytes(response.bodyBytes);
-          saved++;
-        } else {
-          failed++;
-        }
-      } catch (_) {
-        failed++;
+    File? temp;
+    try {
+      final paths = entries.map((e) => _remotePath(e.name)).toList();
+      temp = await _streamPostToTemp(
+        _multiDownloadUri(),
+        {'paths': paths},
+        'files.zip',
+      );
+      final saved = await _saveTempOnce(temp, 'files.zip');
+      temp = null;
+      if (!mounted) return;
+      if (saved == null) return;
+      _showDownloadedMessage(saved);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $e')),
+        );
       }
-    }
-
-    if (mounted) {
-      final msg = failed > 0
-          ? 'Saved $saved file(s) to ${dir.path}, $failed failed'
-          : 'Saved $saved file(s) to ${dir.path}';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      setState(() => _uploading = false);
+    } finally {
+      await _deleteQuietly(temp);
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
@@ -647,6 +895,7 @@ class _SftpRendererState extends State<SftpRenderer> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     widget.sftpSettings.removeListener(_onSftpSettingsChanged);
     super.dispose();
   }
@@ -882,17 +1131,28 @@ class _SftpRendererState extends State<SftpRenderer> {
     if (_loading) return const Center(child: CircularProgressIndicator());
 
     if (_entries.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(MdiIcons.folderOpen,
-                size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            const SizedBox(height: 16),
-            Text('Empty directory',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ],
+      return LayoutBuilder(
+        builder: (_, constraints) => RefreshIndicator(
+          onRefresh: () async => _refresh(),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(MdiIcons.folderOpen,
+                        size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 16),
+                    Text('Empty directory',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -900,6 +1160,8 @@ class _SftpRendererState extends State<SftpRenderer> {
     return RefreshIndicator(
       onRefresh: () async => _refresh(),
       child: ListView.builder(
+        key: PageStorageKey<String>('sftp-list-$_sessionId-$_currentPath'),
+        controller: _scrollController,
         itemCount: _entries.length,
         itemBuilder: (ctx, index) => _buildEntryTile(index),
       ),
@@ -1028,12 +1290,18 @@ class _SftpRendererState extends State<SftpRenderer> {
               ]),
             ),
             const Divider(height: 1),
-            if (!entry.isDir)
-              ListTile(
-                leading: Icon(MdiIcons.downloadOutline),
-                title: const Text('Download'),
-                onTap: () { Navigator.pop(ctx); _downloadFile(entry); },
-              ),
+            ListTile(
+              leading: Icon(MdiIcons.downloadOutline),
+              title: const Text('Download'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (entry.isDir) {
+                  _downloadFolder(entry);
+                } else {
+                  _downloadFile(entry);
+                }
+              },
+            ),
             ListTile(
               leading: Icon(MdiIcons.pencilOutline),
               title: const Text('Rename'),
