@@ -1972,7 +1972,9 @@
         "uploadFolder": "Upload folder",
         "search": "Search files",
         "closeSearch": "Close search",
-        "refresh": "Refresh"
+        "refresh": "Refresh",
+        "createFile": "Create File",
+        "createFolder": "Create Folder"
       },
       "item": {
         "link": "link"
