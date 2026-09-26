@@ -5,6 +5,14 @@ import '../models/monitoring.dart';
 import '../services/monitoring_service.dart';
 import '../utils/auth_manager.dart';
 
+final Map<String, IconData> _mdiByCamelName = {
+  for (final icon in MdiIcons.values)
+    if (icon.mdiMetadata != null)
+      icon.mdiMetadata!.name.split('-').asMap().entries.map((e) =>
+        e.key == 0 ? e.value : e.value[0].toUpperCase() + e.value.substring(1)
+      ).join(): icon,
+};
+
 class MonitoringScreen extends StatefulWidget {
   final AuthManager authManager;
   const MonitoringScreen({super.key, required this.authManager});
@@ -53,6 +61,17 @@ class MonitoringScreenState extends State<MonitoringScreen> {
   }
 
   int get _onlineCount => _servers.where((s) => s.hasData && s.error == null).length;
+
+  IconData _monitorIcon(M s) {
+    if (s.isPVE) return MdiIcons.serverNetwork;
+    final icon = s['icon']?.toString();
+    if (icon != null && icon.startsWith('mdi') && icon.length > 3) {
+      final camel = icon.substring(3, 4).toLowerCase() + icon.substring(4);
+      final hit = _mdiByCamelName[camel];
+      if (hit != null) return hit;
+    }
+    return MdiIcons.server;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -163,7 +182,7 @@ class MonitoringScreenState extends State<MonitoringScreen> {
               Container(
                 width: 44, height: 44,
                 decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-                child: Center(child: Icon(pve ? MdiIcons.serverNetwork : MdiIcons.server, color: fg, size: 20)),
+                child: Center(child: Icon(_monitorIcon(s), color: fg, size: 20)),
               ),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -236,7 +255,7 @@ class MonitoringScreenState extends State<MonitoringScreen> {
               color: s.isPVE ? cs.tertiaryContainer : cs.primaryContainer,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(s.isPVE ? MdiIcons.serverNetwork : MdiIcons.server,
+            child: Icon(_monitorIcon(s),
               color: s.isPVE ? cs.onTertiaryContainer : cs.onPrimaryContainer, size: 18),
           ),
           const SizedBox(width: 10),
