@@ -71,7 +71,10 @@ class _SftpRendererState extends State<SftpRenderer> {
   static const int _maxAliveResets = 3;
   int _pickerDepth = 0;
   bool _reconnectActive = false;
+  bool _quietLoop = false;
   bool _connectionLostWhilePicking = false;
+  bool _quietReadyOnce = false;
+  final ScrollController _scrollController = ScrollController();
 
   bool get _pickerOpen => _pickerDepth > 0;
 
@@ -165,13 +168,15 @@ class _SftpRendererState extends State<SftpRenderer> {
     }
   }
 
-  Future<void> _attemptReconnect() async {
+  Future<void> _attemptReconnect({bool quiet = false}) async {
+    _quietLoop = quiet;
     if (_reconnectActive) return;
     _reconnectActive = true;
     try {
       while (mounted) {
         if (_pickerOpen) {
           _connectionLostWhilePicking = true;
+          _quietReadyOnce = false;
           return;
         }
         if (_reconnectAttempts >= _maxReconnectAttempts) {
@@ -179,12 +184,14 @@ class _SftpRendererState extends State<SftpRenderer> {
           if (!mounted) return;
           if (_pickerOpen) {
             _connectionLostWhilePicking = true;
+            _quietReadyOnce = false;
             return;
           }
           if (alive && _aliveResets < _maxAliveResets) {
             _aliveResets++;
             _reconnectAttempts = 0;
           } else {
+            _quietReadyOnce = false;
             widget.onDisconnected?.call();
             return;
           }
@@ -195,12 +202,14 @@ class _SftpRendererState extends State<SftpRenderer> {
         if (!mounted) return;
         if (_pickerOpen) {
           _connectionLostWhilePicking = true;
+          _quietReadyOnce = false;
           return;
         }
         if (await _reconnectNow()) return;
       }
     } finally {
       _reconnectActive = false;
+      _quietLoop = false;
     }
   }
 
@@ -209,6 +218,8 @@ class _SftpRendererState extends State<SftpRenderer> {
       token: widget.token,
       session: widget.session,
     );
+    final quiet = _quietLoop;
+    _quietReadyOnce = quiet;
     if (!mounted || !success) return false;
     _reconnectAttempts = 0;
     _aliveResets = 0;
@@ -216,7 +227,7 @@ class _SftpRendererState extends State<SftpRenderer> {
     widget.session.sftpSubscription = null;
     setState(() {
       _errorMessage = null;
-      _loading = true;
+      if (!quiet) _loading = true;
     });
     _setupConnection();
     return true;
@@ -236,7 +247,7 @@ class _SftpRendererState extends State<SftpRenderer> {
     if (!mounted || _pickerOpen) return;
     if (!_connectionLostWhilePicking) return;
     _connectionLostWhilePicking = false;
-    _attemptReconnect();
+    _attemptReconnect(quiet: true);
   }
 
   void _processMessage(dynamic data) {
@@ -278,7 +289,9 @@ class _SftpRendererState extends State<SftpRenderer> {
         }
         widget.session.isConnected = true;
         _reconnectAttempts = 0;
-        _listDirectory(ready['path'] as String? ?? _rootPath);
+        final quiet = _quietReadyOnce;
+        _quietReadyOnce = false;
+        _listDirectory(ready['path'] as String? ?? _rootPath, silent: quiet);
         break;
       case _SftpOps.listFiles:
         _handleDirectoryListed(jsonPayload);
@@ -317,7 +330,7 @@ class _SftpRendererState extends State<SftpRenderer> {
         } catch (_) {}
         break;
       default:
-        _listDirectory(_currentPath);
+        _listDirectory(_currentPath, silent: true);
         break;
     }
   }
@@ -368,8 +381,8 @@ class _SftpRendererState extends State<SftpRenderer> {
     channel.sink.add(message);
   }
 
-  void _listDirectory(String path) {
-    setState(() => _loading = true);
+  void _listDirectory(String path, {bool silent = false}) {
+    if (!silent || _entries.isEmpty) setState(() => _loading = true);
     _sendOperation(_SftpOps.listFiles, {'path': path});
   }
 
@@ -431,7 +444,7 @@ class _SftpRendererState extends State<SftpRenderer> {
     });
   }
 
-  void _refresh() => _listDirectory(_currentPath);
+  void _refresh() => _listDirectory(_currentPath, silent: true);
 
   void _showRenameDialog(SftpEntry entry) {
     final controller = TextEditingController(text: entry.name);
@@ -863,6 +876,7 @@ class _SftpRendererState extends State<SftpRenderer> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -1097,17 +1111,28 @@ class _SftpRendererState extends State<SftpRenderer> {
     if (_loading) return const Center(child: CircularProgressIndicator());
 
     if (_entries.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(MdiIcons.folderOpen,
-                size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            const SizedBox(height: 16),
-            Text('Empty directory',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ],
+      return LayoutBuilder(
+        builder: (_, constraints) => RefreshIndicator(
+          onRefresh: () async => _refresh(),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(MdiIcons.folderOpen,
+                        size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 16),
+                    Text('Empty directory',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -1115,6 +1140,8 @@ class _SftpRendererState extends State<SftpRenderer> {
     return RefreshIndicator(
       onRefresh: () async => _refresh(),
       child: ListView.builder(
+        key: PageStorageKey<String>('sftp-list-$_sessionId-$_currentPath'),
+        controller: _scrollController,
         itemCount: _entries.length,
         itemBuilder: (ctx, index) => _buildEntryTile(index),
       ),
