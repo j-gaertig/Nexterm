@@ -326,6 +326,8 @@ class _TerminalRendererState extends State<TerminalRenderer> {
                       child: TerminalView(
                         _terminal,
                         theme: widget.terminalSettings.colorTheme.theme,
+                        cursorType: TerminalCursorType.verticalBar,
+                        keyboardType: TextInputType.visiblePassword,
                         textStyle: TerminalStyle(
                           fontSize: widget.terminalSettings.fontSize,
                           fontFamily: GoogleFonts.jetBrainsMono().fontFamily ?? 'monospace',
