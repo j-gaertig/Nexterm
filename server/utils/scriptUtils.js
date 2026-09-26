@@ -23,7 +23,14 @@ const checkSudoPrompt = (output) => {
     return { variable: "SUDO_PASSWORD", prompt: `Enter sudo password for ${m?.[1] || "user"}`, default: "", isSudoPassword: true, type: "password" };
 };
 
-const transformScript = (content) => {
+const transformWindowsDataDirective = (type, title, data) => {
+    const quote = (value) => `'${value.replace(/'/g, "''")}'`;
+    const values = data.match(/"(?:\\.|[^"\\])*"/g) || [quote(data)];
+    const prefix = quote(`NEXTERM_${type}:${escapeColons(title)}:`);
+    return `$__nextermValues = @(${values.join(", ")}); $__nextermEncodedValues = (($__nextermValues | ForEach-Object { '"' + ([string]$_ -replace ':', '\\x3A' -replace '"', '\\"') + '"' }) -join ' '); Write-Output (${prefix} + $__nextermEncodedValues); $NEXTERM_${type}_RESULT = Read-Host`;
+};
+
+const transformScript = (content, platform = "linux") => {
     const esc = (t) => t.replace(/:/g, "\\x3A");
     let t = content.replace(/\r\n?/g, "\n")
         .replace(/^(\s*)sudo(?!\s+-S)(\s+)/gm, "$1sudo -S$2")
@@ -47,12 +54,66 @@ const transformScript = (content) => {
         .replace(/^(\s*)@NEXTERM:MSGBOX\s+"((?:\\.|[^"\\])*)"\s+"((?:\\.|[^"\\])*)"/gm, (_, i, ti, m) =>
             `${i}echo "NEXTERM_MSGBOX:${esc(ti)}:${esc(m)}" && read -r NEXTERM_MSGBOX_RESULT`);
 
+    if (platform === "windows") {
+        const quote = (value) => `'${value.replace(/'/g, "''")}'`;
+        t = content.replace(/\r\n?/g, "\n")
+            .replace(/^[ \t]*@NEXTERM:STEP\s+"((?:\\.|[^"\\])*)"/gm, (_, message) => `Write-Output ${quote(`NEXTERM_STEP:${message}`)}`)
+            .replace(/^[ \t]*@NEXTERM:INPUT\s+(\S+)\s+"((?:\\.|[^"\\])*)"(?:\s+"((?:\\.|[^"\\]*)*)")?/gm, (_, variable, prompt, value = "") =>
+                `Write-Output ${quote(`NEXTERM_INPUT:${variable}:${esc(prompt)}:${esc(value)}`)}; $${variable} = Read-Host`)
+            .replace(/^[ \t]*@NEXTERM:SELECT\s+(\S+)\s+"((?:\\.|[^"\\])*)"\s+(.+)/gm, (_, variable, prompt, options) =>
+                `Write-Output ${quote(`NEXTERM_SELECT:${variable}:${esc(prompt)}:${esc(options)}`)}; $${variable} = Read-Host`)
+            .replace(/^[ \t]*@NEXTERM:WARN\s+"((?:\\.|[^"\\])*)"/gm, (_, message) => `Write-Output ${quote(`NEXTERM_WARN:${esc(message)}`)}`)
+            .replace(/^[ \t]*@NEXTERM:INFO\s+"((?:\\.|[^"\\])*)"/gm, (_, message) => `Write-Output ${quote(`NEXTERM_INFO:${esc(message)}`)}`)
+            .replace(/^[ \t]*@NEXTERM:CONFIRM\s+"((?:\\.|[^"\\])*)"/gm, (_, message) =>
+                `Write-Output ${quote(`NEXTERM_CONFIRM:${esc(message)}`)}; $NEXTERM_CONFIRM_RESULT = Read-Host`)
+            .replace(/^[ \t]*@NEXTERM:PROGRESS\s+(\$?\w+|\d+)/gm, (_, value) => value.startsWith("$")
+                ? `Write-Output ("NEXTERM_PROGRESS:" + ${value})`
+                : `Write-Output ${quote(`NEXTERM_PROGRESS:${value}`)}`)
+            .replace(/^[ \t]*@NEXTERM:SUCCESS\s+"((?:\\.|[^"\\])*)"/gm, (_, message) => `Write-Output ${quote(`NEXTERM_SUCCESS:${esc(message)}`)}`)
+            .replace(/^[ \t]*@NEXTERM:SUMMARY\s+"((?:\\.|[^"\\])*)"\s+(.+)/gm, (_, title, data) =>
+                transformWindowsDataDirective("SUMMARY", title, data))
+            .replace(/^[ \t]*@NEXTERM:TABLE\s+"((?:\\.|[^"\\])*)"\s+(.+)/gm, (_, title, data) =>
+                transformWindowsDataDirective("TABLE", title, data))
+            .replace(/^[ \t]*@NEXTERM:MSGBOX\s+"((?:\\.|[^"\\])*)"\s+"((?:\\.|[^"\\])*)"/gm, (_, title, message) =>
+                `Write-Output ${quote(`NEXTERM_MSGBOX:${esc(title)}:${esc(message)}`)}; $NEXTERM_MSGBOX_RESULT = Read-Host`);
+        const script = `$ErrorActionPreference = 'Stop'\n${t}\n`;
+        return { b64: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, "utf8")]).toString("base64"), platform };
+    }
+
     const script = `#!/bin/bash\nset -e\n${t}\n`;
     const b64 = Buffer.from(script).toString("base64");
-    return { b64, command: null };
+    return { b64, command: null, platform };
 };
 
-const getScriptCommands = (b64) => {
+const getScriptCommands = (b64, platform = "linux") => {
+    if (platform === "windows") {
+        const fileId = `${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const b64Path = `(Join-Path $env:TEMP 'nexterm_${fileId}.b64')`;
+        const scriptPath = `(Join-Path $env:TEMP 'nexterm_${fileId}.ps1')`;
+        const encodeCommand = (command) => `powershell.exe -NoLogo -NoProfile -EncodedCommand ${Buffer.from(command, "utf16le").toString("base64")}`;
+        const commands = [encodeCommand(`[IO.File]::WriteAllText(${b64Path}, '')`)];
+        const CHUNK_SIZE = 1200;
+        for (let i = 0; i < b64.length; i += CHUNK_SIZE) {
+            const chunk = b64.slice(i, i + CHUNK_SIZE);
+            commands.push(encodeCommand(`[IO.File]::AppendAllText(${b64Path}, '${chunk}')`));
+        }
+        commands.push(encodeCommand(`
+            $ErrorActionPreference = 'Stop'
+            $b64Path = ${b64Path}; $scriptPath = ${scriptPath}; $code = 0
+            try {
+                [IO.File]::WriteAllBytes($scriptPath, [Convert]::FromBase64String([IO.File]::ReadAllText($b64Path)))
+                Write-Output 'NEXTERM_READY'
+                $global:LASTEXITCODE = $null
+                & $scriptPath
+                $scriptSucceeded = $?
+                if ($LASTEXITCODE -ne $null) { $code = $LASTEXITCODE } elseif (-not $scriptSucceeded) { $code = 1 }
+            } catch { Write-Output $_; $code = 1 }
+            Remove-Item $b64Path, $scriptPath -Force -ErrorAction SilentlyContinue
+            Write-Output ("NEXTERM_END:$code")
+        `));
+        return commands;
+    }
+
     const CHUNK_SIZE = 2000;
     const commands = [];
 

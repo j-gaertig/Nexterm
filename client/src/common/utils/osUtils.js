@@ -1,4 +1,5 @@
 export const OS_OPTIONS = [
+    { value: 'Windows', label: 'Windows' },
     { value: 'Ubuntu', label: 'Ubuntu' },
     { value: 'Debian', label: 'Debian' },
     { value: 'Alpine Linux', label: 'Alpine Linux' },
@@ -28,6 +29,7 @@ export const normalizeOsName = (osName) => {
     if (!osName) return null;
     const lower = osName.toLowerCase();
     const mappings = [
+        ['windows', 'Windows'], ['microsoft windows', 'Windows'],
         ['ubuntu', 'Ubuntu'], ['debian', 'Debian'], ['alpine', 'Alpine Linux'],
         ['fedora', 'Fedora'], ['centos', 'CentOS'], ['red hat', 'Red Hat'], ['rhel', 'Red Hat'],
         ['rocky', 'Rocky Linux'], ['alma', 'AlmaLinux'], ['opensuse', 'openSUSE'], ['suse', 'openSUSE'],
@@ -40,8 +42,19 @@ export const normalizeOsName = (osName) => {
     return osName;
 };
 
+export const normalizeScriptOsFilter = (osFilter) => {
+    const filter = parseOsFilter(osFilter).map(normalizeOsName);
+    return filter.includes('Windows') ? ['Windows'] : filter;
+};
+
+export const normalizeOsNameFromIcon = (icon) => {
+    if (!icon) return null;
+    const normalized = normalizeOsName(icon);
+    return normalized === icon ? null : normalized;
+};
+
 export const matchesOsFilter = (osFilter, serverOsName, isPveEntry) => {
-    const filter = parseOsFilter(osFilter);
+    const filter = parseOsFilter(osFilter).map(normalizeOsName);
     const hasPveFilter = filter.includes('Proxmox VE');
     const isOnlyPve = filter.length === 1 && hasPveFilter;
     
@@ -49,9 +62,9 @@ export const matchesOsFilter = (osFilter, serverOsName, isPveEntry) => {
         if (filter.length === 0) return true;
         return hasPveFilter;
     } else {
-        if (isOnlyPve) return false;
         if (filter.length === 0) return true;
-        if (!serverOsName) return !hasPveFilter || filter.length > 1;
+        if (isOnlyPve) return false;
+        if (!serverOsName) return false;
         return filter.includes(serverOsName);
     }
 };

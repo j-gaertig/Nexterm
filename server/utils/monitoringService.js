@@ -77,6 +77,13 @@ const IFACE_DETAIL_CMD =
     '"$(cat "$d/statistics/rx_bytes" 2>/dev/null)" ' +
     '"$(cat "$d/statistics/tx_bytes" 2>/dev/null)"; done';
 
+const osDetectionCache = new Map();
+
+const WINDOWS_OS_COMMAND = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(
+    "$os = Get-CimInstance Win32_OperatingSystem; Write-Output ($os.Caption + '|' + $os.Version)",
+    "utf16le",
+).toString("base64")}`;
+
 const COMMANDS = {
     cpu: "grep 'cpu ' /proc/stat",
     memory: "free -b",
@@ -87,6 +94,7 @@ const COMMANDS = {
     lsblk: "lsblk -b -o NAME,TYPE,SIZE,MODEL,SERIAL,ROTA,MOUNTPOINT -J",
     df: "df -B1 --output=source,fstype,size,used,avail,pcent,target | grep -E '^/dev'",
     osRelease: "cat /etc/os-release",
+    windowsOS: WINDOWS_OS_COMMAND,
     kernel: "uname -r",
     arch: "uname -m",
     hostname: "hostname",
@@ -121,6 +129,15 @@ const collectServerData = async (entry, identity, credentials) => {
         }
 
         const memory = parseMemoryUsage(out.memory);
+        const osInfo = parseOSInfo(out.osRelease, out.kernel, out.arch, out.hostname);
+        if (!osInfo.name && out.windowsOS) {
+            const [name, version] = out.windowsOS.split("|");
+            if (name) {
+                osInfo.name = name.trim();
+                osInfo.version = version?.trim() || null;
+            }
+        }
+
         return {
             status: "online",
             timestamp: new Date(),
@@ -132,12 +149,59 @@ const collectServerData = async (entry, identity, credentials) => {
             loadAverage: parseLoadAverage(out.loadAverage),
             processes: parseProcessCount(out.processCount),
             processList: parseProcessList(out.processList),
-            osInfo: parseOSInfo(out.osRelease, out.kernel, out.arch, out.hostname),
+            osInfo,
             network: parseNetworkInterfaces(out.ifaceDetails, out.ipAddr),
         };
     } catch (error) {
         logger.error("Error during monitoring data collection", { error: error.message, host });
         return { status: "offline", timestamp: new Date(), errorMessage: error.message };
+    }
+};
+
+const detectServerOS = async (entry) => {
+    const cached = osDetectionCache.get(entry.id);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+    const promise = (async () => {
+        if (!controlPlane.hasEngine()) return null;
+        const entryIdentities = await EntryIdentity.findAll({ where: { entryId: entry.id }, order: [["isDefault", "DESC"]] });
+        if (!entryIdentities?.length) return null;
+        const identity = await Identity.findByPk(entryIdentities[0].identityId);
+        if (!identity) return null;
+        const credentials = await getIdentityCredentials(identity.id);
+        const host = entry.config?.ip;
+        if (!host) return null;
+
+        const batch = await controlPlane.execCommandBatch(
+            host,
+            entry.config?.port || 22,
+            buildSSHParams(identity, credentials),
+            [
+                { id: "linuxOS", command: "cat /etc/os-release" },
+                { id: "windowsOS", command: WINDOWS_OS_COMMAND },
+            ],
+            await resolveJumpHosts(entry),
+            entry.config?.engineId,
+        );
+        if (!batch.success) return null;
+
+        const output = Object.fromEntries((batch.results || []).map(result => [result.id, result.success ? (result.stdout || "").trim() : ""]));
+        const osInfo = parseOSInfo(output.linuxOS || "", "", "", "");
+        if (osInfo.name) return osInfo;
+        if (output.windowsOS) {
+            const [name, version] = output.windowsOS.split("|");
+            if (name) return { name: name.trim(), version: version?.trim() || null };
+        }
+        return null;
+    })();
+
+    osDetectionCache.set(entry.id, { promise, expiresAt: Date.now() + 60_000 });
+    try {
+        return await promise;
+    } catch (error) {
+        osDetectionCache.delete(entry.id);
+        logger.debug("Could not detect SSH server operating system", { entryId: entry.id, error: error.message });
+        return null;
     }
 };
 
@@ -357,4 +421,4 @@ const cleanupOldData = async () => {
 
 setInterval(cleanupOldData, 60 * 60 * 1000);
 
-module.exports = { start, stop };
+module.exports = { start, stop, detectServerOS };

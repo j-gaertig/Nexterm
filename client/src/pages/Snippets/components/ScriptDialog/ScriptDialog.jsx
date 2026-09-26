@@ -12,7 +12,7 @@ import { registerNextermLanguage } from "@/common/monaco/nexterm-lang.js";
 import { useToast } from "@/common/contexts/ToastContext.jsx";
 import { useTranslation } from "react-i18next";
 import { useScripts } from "@/common/contexts/ScriptContext.jsx";
-import { OS_OPTIONS, parseOsFilter } from "@/common/utils/osUtils.js";
+import { OS_OPTIONS, parseOsFilter, normalizeScriptOsFilter } from "@/common/utils/osUtils.js";
 import * as monaco from "monaco-editor";
 
 loader.config({ monaco });
@@ -32,7 +32,25 @@ export const ScriptDialog = ({ open, onClose, editScriptId, selectedOrganization
 
     const isEditing = !!editScriptId;
 
-    const getDefaultContent = () => {
+    const getDefaultContent = (platform = "linux") => {
+        if (platform === "windows") return `@NEXTERM:STEP "Getting Windows system information"
+@NEXTERM:INPUT APP_NAME "Which application would you like to install?" ""
+@NEXTERM:SELECT INSTALL_TYPE "Choose installation type" stable testing "development version"
+
+if ($INSTALL_TYPE -eq "development version") {
+    @NEXTERM:WARN "Development version may be unstable"
+    @NEXTERM:CONFIRM "Are you sure you want to continue with development version?"
+    if ($NEXTERM_CONFIRM_RESULT -eq "Yes") {
+        @NEXTERM:INFO "Setting up development environment"
+    }
+} else {
+    @NEXTERM:STEP "Standard installation process"
+    Write-Output "Installing $APP_NAME..."
+}
+
+$os = Get-CimInstance Win32_OperatingSystem
+Write-Output "$($os.Caption) | $env:USERNAME | PowerShell $($PSVersionTable.PSVersion)"
+@NEXTERM:SUMMARY "System Information" "OS" "Windows" "Shell" "PowerShell"`;
         return `@NEXTERM:STEP "Getting user preferences"
 @NEXTERM:INPUT APP_NAME "Which application would you like to install?" "nginx"
 @NEXTERM:SELECT INSTALL_TYPE "Choose installation type" stable testing "development version"
@@ -66,15 +84,15 @@ fi
         try {
             const queryParams = selectedOrganization ? `?organizationId=${selectedOrganization}` : "";
             const script = await getRequest(`scripts/${editScriptId}${queryParams}`);
-            const parsedOsFilter = parseOsFilter(script.osFilter);
+            const parsedOsFilter = normalizeScriptOsFilter(script.osFilter);
             setName(script.name || "");
             setDescription(script.description || "");
-            setContent(script.content || getDefaultContent());
+            setContent(script.content || getDefaultContent(parsedOsFilter.includes("Windows") ? "windows" : "linux"));
             setOsFilter(parsedOsFilter);
             initialValues.current = { 
                 name: script.name || '', 
                 description: script.description || '', 
-                content: script.content || getDefaultContent(),
+                content: script.content || getDefaultContent(parsedOsFilter.includes("Windows") ? "windows" : "linux"),
                 osFilter: parsedOsFilter
             };
         } catch (error) {
@@ -149,6 +167,13 @@ fi
         initialValues.current = { name: '', description: '', content: defaultContent, osFilter: [] };
     };
 
+    const handleOsFilterChange = (nextFilter) => {
+        const platformFilter = nextFilter.includes("Windows") ? ["Windows"] : nextFilter;
+        const wasDefault = content === getDefaultContent() || content === getDefaultContent("windows");
+        setOsFilter(platformFilter);
+        if (wasDefault) setContent(getDefaultContent(platformFilter[0] === "Windows" ? "windows" : "linux"));
+    };
+
     const handleClose = () => {
         resetForm();
         onClose();
@@ -208,7 +233,7 @@ fi
                             <SelectBox 
                                 options={OS_OPTIONS} 
                                 selected={osFilter} 
-                                setSelected={setOsFilter} 
+                                setSelected={handleOsFilterChange}
                                 multiple={true}
                                 placeholder={t("scripts.dialog.placeholders.osFilter")}
                             />
