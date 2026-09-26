@@ -103,7 +103,9 @@ const DraggableTab = ({
                         />
                     </svg>
                 )}
-                {pageInfo?.icon
+                {session.isPendingConnection
+                    ? <div className="pending-tab-spinner" aria-label={t("common.connectorSetup.connecting")} />
+                    : pageInfo?.icon
                     ? <img src={pageInfo.icon} className="progress-icon page-favicon" alt="" />
                     : <Icon path={isNotes ? mdiNoteEditOutline : getIconPath(server.icon)} className="progress-icon" />}
             </div>

@@ -33,11 +33,21 @@
     width: 100% !important
     transition: width 0.15s ease-out
 
+  &--indeterminate
+    width: 28%
+    animation: connectionProgressIndeterminate 1.5s ease-in-out infinite
+
 .connection-loader__content
   display: flex
   justify-content: center
   align-items: center
   gap: 2rem
+
+.connection-loader__label
+  position: absolute
+  top: calc(50% + 3rem)
+  color: colors.$subtext
+  font-size: 0.95rem
 
 .connection-loader__device
   display: flex
@@ -94,3 +104,9 @@
   50%
     opacity: 1
     transform: translateX(4px)
+
+@keyframes connectionProgressIndeterminate
+  0%, 100%
+    transform: translateX(-35%)
+  50%
+    transform: translateX(260%)

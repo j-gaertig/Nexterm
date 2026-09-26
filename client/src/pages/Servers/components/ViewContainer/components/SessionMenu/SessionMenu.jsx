@@ -93,7 +93,10 @@ export const SessionMenu = ({
 
     return (
         <ContextMenu isOpen={menu.isOpen} position={menu.position} onClose={menu.close} trigger={menu.triggerRef}>
-            {session && (
+            {session && (session.isPendingConnection ? (
+                <ContextMenuItem icon={mdiClose} label={t("servers.tabs.contextMenu.closeSession")}
+                                 onClick={() => onCloseSession(session.id)} danger />
+            ) : (
                 <>
                     {controls && isActive && (
                         <>
@@ -167,7 +170,7 @@ export const SessionMenu = ({
                     <ContextMenuItem icon={mdiClose} label={t("servers.tabs.contextMenu.closeSession")}
                                      onClick={() => onCloseSession(session.id)} danger />
                 </>
-            )}
+            ))}
         </ContextMenu>
     );
 };

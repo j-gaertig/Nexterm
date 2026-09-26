@@ -264,6 +264,18 @@
             width: 0.875rem
             height: 0.875rem
 
+        .pending-tab-spinner
+          width: 1rem
+          height: 1rem
+          border: 2px solid colors.$gray
+          border-top-color: colors.$primary
+          border-radius: 50%
+          animation: pendingTabSpin 0.8s linear infinite
+
+          @media (max-width: breakpoints.$mobile)
+            width: 0.875rem
+            height: 0.875rem
+
       h2
         margin: 0
         font-size: 1.15rem
@@ -365,3 +377,7 @@
 .progress-icon.page-favicon
   object-fit: contain
   border-radius: 0.2rem
+
+@keyframes pendingTabSpin
+  to
+    transform: rotate(360deg)

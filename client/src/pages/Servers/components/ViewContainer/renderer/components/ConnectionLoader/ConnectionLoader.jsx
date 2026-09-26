@@ -3,7 +3,7 @@ import Icon from "@mdi/react";
 import { mdiLaptop, mdiServer } from "@mdi/js";
 import "./styles.sass";
 
-export const ConnectionLoader = memo(({ onReady }) => {
+export const ConnectionLoader = memo(({ onReady, label = null, indeterminate = false }) => {
     const containerRef = useRef(null);
     const progressBarRef = useRef(null);
     const isHiddenRef = useRef(false);
@@ -54,7 +54,8 @@ export const ConnectionLoader = memo(({ onReady }) => {
 
     return (
         <div ref={containerRef} className="connection-loader">
-            <div ref={progressBarRef} className="connection-loader__progress-bar" />
+            <div ref={progressBarRef}
+                 className={`connection-loader__progress-bar${indeterminate ? " connection-loader__progress-bar--indeterminate" : ""}`} />
             <div className="connection-loader__content">
                 <div className="connection-loader__device">
                     <Icon path={mdiLaptop} className="connection-loader__device-icon" />
@@ -68,6 +69,7 @@ export const ConnectionLoader = memo(({ onReady }) => {
                     <Icon path={mdiServer} className="connection-loader__device-icon" />
                 </div>
             </div>
+            {label && <div className="connection-loader__label">{label}</div>}
         </div>
     );
 });

@@ -59,6 +59,8 @@ export const Servers = () => {
     const [hibernatedSessions, setHibernatedSessions] = useState([]);
     const closingSessionsRef = useRef(new Set());
     const erroredSessionsRef = useRef(new Map());
+    const pendingConnectionsRef = useRef(new Map());
+    const cancelledPendingRef = useRef(new Set());
     const autoReconnectRef = useRef(null);
 
     const markSessionErrored = useCallback((sessionId, message) => {
@@ -121,7 +123,7 @@ export const Servers = () => {
 
         setActiveSessions(prev => {
             const prevMap = new Map(prev.map(s => [s.id, s]));
-            const localOnly = prev.filter(s => s.type === "notes" || s.isJoined);
+            const localOnly = prev.filter(s => s.type === "notes" || s.isJoined || s.isPendingConnection);
             const merged = activeMapped.map(newSession => {
                 const existing = prevMap.get(newSession.id);
                 const reconnectKey = existing?.reconnectKey || makeReconnectKey();
@@ -241,6 +243,34 @@ export const Servers = () => {
 
     const performConnection = async (options, connectionReason = null) => {
         const { server, identity = null, type = null, directIdentity = null, scriptId = null, scriptName = null, placement = null, replaceSessionId = null } = options;
+        const identityKey = identity?.id ?? (directIdentity
+            ? `${directIdentity.username || ""}:${directIdentity.type || ""}`
+            : null);
+        const pendingKey = JSON.stringify([
+            server.id,
+            identityKey,
+            type || server.renderer || null,
+            scriptId ?? null,
+        ]);
+        const existingPendingId = pendingConnectionsRef.current.get(pendingKey);
+        if (existingPendingId) {
+            setActiveSessionId(existingPendingId);
+            return true;
+        }
+
+        const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        pendingConnectionsRef.current.set(pendingKey, pendingId);
+        setActiveSessions(prev => [...prev, {
+            id: pendingId,
+            server,
+            identity: identity?.id,
+            type: type || undefined,
+            isPendingConnection: true,
+            pendingKey,
+        }]);
+        sessionLayout.placeSession(pendingId, placement);
+        setActiveSessionId(pendingId);
+
         try {
             const payload = {
                 entryId: server.id,
@@ -255,6 +285,13 @@ export const Servers = () => {
             if (directIdentity) payload.directIdentity = directIdentity;
             if (scriptId) payload.scriptId = scriptId;
             const session = await postRequest("/connections", payload);
+
+            if (cancelledPendingRef.current.delete(pendingId)) {
+                deleteRequest(`/connections/${session.sessionId}`).catch(error => {
+                    console.debug("Cancelled session deletion request failed:", error);
+                });
+                return false;
+            }
 
             const organization = findOrganizationForServer(server.id, servers);
             const organizationId = organization ? parseInt(organization.id.split("-")[1]) : null;
@@ -275,29 +312,45 @@ export const Servers = () => {
                 reconnectKey,
             };
 
-            sessionLayout.placeSession(session.sessionId, placement);
+            sessionLayout.replaceSession(pendingId, session.sessionId);
             if (replaceSessionId) {
                 closingSessionsRef.current.add(replaceSessionId);
                 erroredSessionsRef.current.delete(replaceSessionId);
-                sessionLayout.replaceSession(replaceSessionId, session.sessionId);
                 deleteRequest(`/connections/${replaceSessionId}`).catch(error => {
                     console.debug("Old session deletion request failed:", error);
                 });
                 setActiveSessions(prevSessions => {
-                    const idx = prevSessions.findIndex(s => s.id === replaceSessionId);
-                    if (idx === -1) return [...prevSessions, sessionData];
-                    const next = [...prevSessions];
-                    next.splice(idx, 1, sessionData);
+                    const withoutOldSession = prevSessions.filter(s => s.id !== replaceSessionId);
+                    const pendingIndex = withoutOldSession.findIndex(s => s.id === pendingId);
+                    if (pendingIndex === -1) return [...withoutOldSession, sessionData];
+                    const next = [...withoutOldSession];
+                    next.splice(pendingIndex, 1, sessionData);
                     return next;
                 });
             } else {
-                setActiveSessions(prevSessions => [...prevSessions, sessionData]);
+                setActiveSessions(prevSessions => {
+                    const pendingIndex = prevSessions.findIndex(s => s.id === pendingId);
+                    if (pendingIndex === -1) return [...prevSessions, sessionData];
+                    const next = [...prevSessions];
+                    next.splice(pendingIndex, 1, sessionData);
+                    return next;
+                });
             }
             setActiveSessionId(session.sessionId);
             return true;
         } catch (error) {
+            cancelledPendingRef.current.delete(pendingId);
+            setActiveSessions(prev => {
+                const remaining = prev.filter(s => s.id !== pendingId);
+                setActiveSessionId(current => current === pendingId ? remaining.at(-1)?.id || null : current);
+                return remaining;
+            });
             console.error("Failed to create session", error);
             return false;
+        } finally {
+            if (pendingConnectionsRef.current.get(pendingKey) === pendingId) {
+                pendingConnectionsRef.current.delete(pendingKey);
+            }
         }
     };
 
@@ -365,7 +418,17 @@ export const Servers = () => {
 
     const closeSession = (sessionId) => {
         const session = activeSessions.find(s => s.id === sessionId);
+        if (session?.isPendingConnection) {
+            cancelledPendingRef.current.add(sessionId);
+            if (pendingConnectionsRef.current.get(session.pendingKey) === sessionId) {
+                pendingConnectionsRef.current.delete(session.pendingKey);
+            }
+        }
         if (session?.type !== "notes" && !session?.isJoined) {
+            if (session?.isPendingConnection) {
+                disconnectFromServer(sessionId);
+                return;
+            }
             closingSessionsRef.current.add(sessionId);
             deleteRequest(`/connections/${sessionId}`).catch(error => {
                 console.debug("Session deletion request failed:", error);

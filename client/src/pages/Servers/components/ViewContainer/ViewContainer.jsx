@@ -11,6 +11,7 @@ import XtermRenderer from "@/pages/Servers/components/ViewContainer/renderer/Xte
 import FileRenderer from "@/pages/Servers/components/ViewContainer/renderer/FileRenderer";
 import ScriptRenderer from "@/pages/Servers/components/ViewContainer/renderer/ScriptRenderer";
 import NotesRenderer from "@/pages/Servers/components/ViewContainer/renderer/NotesRenderer";
+import PendingSession from "./PendingSession";
 import { useTauriWindow } from "@/common/hooks/useTauriWindow.js";
 import { useBodyClass } from "@/common/hooks/useBodyClass.js";
 
@@ -347,6 +348,10 @@ export const ViewContainer = ({
     }, [activeSessions.length, activeSessionId, focusSessionElement]);
 
     const renderRenderer = (session) => {
+        if (session.isPendingConnection) {
+            return <PendingSession />;
+        }
+
         if (session.type === "notes") {
             return <NotesRenderer session={session} />;
         }
