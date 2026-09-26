@@ -3,22 +3,27 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class SftpSettings extends ChangeNotifier {
   static const String _showHiddenFilesKey = 'sftp_showHiddenFiles';
+  static const String _dimHiddenFilesKey = 'sftp_dimHiddenFiles';
   static const String _confirmBeforeDeleteKey = 'sftp_confirmBeforeDelete';
   static const String _sortFoldersFirstKey = 'sftp_sortFoldersFirst';
 
   bool _showHiddenFiles;
+  bool _dimHiddenFiles;
   bool _confirmBeforeDelete;
   bool _sortFoldersFirst;
 
   bool get showHiddenFiles => _showHiddenFiles;
+  bool get dimHiddenFiles => _dimHiddenFiles;
   bool get confirmBeforeDelete => _confirmBeforeDelete;
   bool get sortFoldersFirst => _sortFoldersFirst;
 
   SftpSettings._({
     required bool showHiddenFiles,
+    required bool dimHiddenFiles,
     required bool confirmBeforeDelete,
     required bool sortFoldersFirst,
   })  : _showHiddenFiles = showHiddenFiles,
+        _dimHiddenFiles = dimHiddenFiles,
         _confirmBeforeDelete = confirmBeforeDelete,
         _sortFoldersFirst = sortFoldersFirst;
 
@@ -26,6 +31,7 @@ class SftpSettings extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     return SftpSettings._(
       showHiddenFiles: prefs.getBool(_showHiddenFilesKey) ?? false,
+      dimHiddenFiles: prefs.getBool(_dimHiddenFilesKey) ?? true,
       confirmBeforeDelete: prefs.getBool(_confirmBeforeDeleteKey) ?? true,
       sortFoldersFirst: prefs.getBool(_sortFoldersFirstKey) ?? true,
     );
@@ -35,6 +41,13 @@ class SftpSettings extends ChangeNotifier {
     _showHiddenFiles = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_showHiddenFilesKey, value);
+    notifyListeners();
+  }
+
+  Future<void> setDimHiddenFiles(bool value) async {
+    _dimHiddenFiles = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_dimHiddenFilesKey, value);
     notifyListeners();
   }
 

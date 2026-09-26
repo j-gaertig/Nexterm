@@ -365,6 +365,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onChanged: (v) => sf.setShowHiddenFiles(v),
                   ),
                   Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
+                  if (sf.showHiddenFiles)
+                    SwitchListTile(
+                      contentPadding: const EdgeInsets.only(left: 16, right: 12),
+                      secondary: Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(color: cs.primaryContainer, borderRadius: BorderRadius.circular(10)),
+                        child: Icon(MdiIcons.opacity, color: cs.onPrimaryContainer, size: 18),
+                      ),
+                      title: const Text('Dim Hidden Files', style: TextStyle(fontSize: 15)),
+                      subtitle: Text('Display hidden files with reduced opacity.', style: TextStyle(fontSize: 12, color: cs.outline)),
+                      value: sf.dimHiddenFiles,
+                      onChanged: (v) => sf.setDimHiddenFiles(v),
+                    ),
+                  if (sf.showHiddenFiles)
+                    Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
                   SwitchListTile(
                     contentPadding: const EdgeInsets.only(left: 16, right: 12),
                     secondary: Container(
