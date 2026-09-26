@@ -758,6 +758,7 @@
       "invite": "Einladen",
       "delete": "Löschen",
       "leave": "Verlassen",
+      "rename": "Organisation umbenennen",
       "members": "Mitglieder",
       "auditSettings": {
         "auditSettingsTab": "Audit-Einstellungen",
@@ -803,6 +804,7 @@
       "leaveConfirmation": "Bist du sicher, dass du diese Organisation verlassen willst?",
       "dialog": {
         "title": "Organisation erstellen",
+        "editTitle": "Organisation umbenennen",
         "fields": {
           "name": "Name",
           "namePlaceholder": "Name der Organisation",
@@ -811,12 +813,15 @@
         },
         "actions": {
           "cancel": "Abbrechen",
-          "create": "Erstellen"
+          "create": "Erstellen",
+          "save": "Speichern"
         },
         "messages": {
           "nameRequired": "Name der Organisation ist erforderlich",
           "createSuccess": "Organisation erfolgreich erstellt",
-          "createFailed": "Organisation konnte nicht erstellt werden"
+          "createFailed": "Organisation konnte nicht erstellt werden",
+          "updateSuccess": "Organisation erfolgreich umbenannt",
+          "updateFailed": "Organisation konnte nicht umbenannt werden"
         }
       },
       "sessionSettings": {

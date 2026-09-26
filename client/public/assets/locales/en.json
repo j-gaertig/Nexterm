@@ -758,6 +758,7 @@
       "invite": "Invite",
       "delete": "Delete",
       "leave": "Leave",
+      "rename": "Rename organization",
       "members": "Members",
       "auditSettings": {
         "auditSettingsTab": "Audit Settings",
@@ -803,6 +804,7 @@
       "leaveConfirmation": "Are you sure you want to leave this organization?",
       "dialog": {
         "title": "Create Organization",
+        "editTitle": "Rename Organization",
         "fields": {
           "name": "Name",
           "namePlaceholder": "Organization name",
@@ -811,12 +813,15 @@
         },
         "actions": {
           "cancel": "Cancel",
-          "create": "Create"
+          "create": "Create",
+          "save": "Save"
         },
         "messages": {
           "nameRequired": "Organization name is required",
           "createSuccess": "Organization created successfully",
-          "createFailed": "Failed to create organization"
+          "createFailed": "Failed to create organization",
+          "updateSuccess": "Organization renamed successfully",
+          "updateFailed": "Failed to rename organization"
         }
       },
       "sessionSettings": {

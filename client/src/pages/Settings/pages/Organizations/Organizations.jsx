@@ -5,7 +5,7 @@ import { ServerContext } from "@/common/contexts/ServerContext.jsx";
 import { UserContext } from "@/common/contexts/UserContext.jsx";
 import { Permission } from "@/common/utils/permissions.js";
 import Icon from "@mdi/react";
-import { mdiCheckCircleOutline, mdiCloseCircleOutline, mdiDomain, mdiMonitorShare, mdiPlus, mdiShieldCheckOutline } from "@mdi/js";
+import { mdiCheckCircleOutline, mdiCloseCircleOutline, mdiDomain, mdiMonitorShare, mdiPencil, mdiPlus, mdiShieldCheckOutline } from "@mdi/js";
 import Button from "@/common/components/Button";
 import TabSwitcher from "@/common/components/TabSwitcher";
 import OrganizationDialog from "./components/OrganizationDialog";
@@ -26,6 +26,8 @@ export const Organizations = () => {
     const [organizations, setOrganizations] = useState([]);
     const [pendingInvitations, setPendingInvitations] = useState([]);
     const [createDialogOpen, setCreateDialogOpen] = useState(false);
+    const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+    const [renameOrganization, setRenameOrganization] = useState(null);
     const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
     const [selectedOrganization, setSelectedOrganization] = useState(null);
     const [expandedOrgId, setExpandedOrgId] = useState(null);
@@ -103,6 +105,12 @@ export const Organizations = () => {
         setInviteDialogOpen(true);
     };
 
+    const handleRenameOrg = (org, e) => {
+        e.stopPropagation();
+        setRenameOrganization(org);
+        setRenameDialogOpen(true);
+    };
+
     const showConfirmDialog = (action, text) => {
         setConfirmAction(() => action);
         setConfirmText(text);
@@ -170,7 +178,18 @@ export const Organizations = () => {
                                     <Icon path={mdiDomain} />
                                 </div>
                                 <div className="details">
-                                    <h3>{org.name}</h3>
+                                    <div className="name-row">
+                                        <h3>{org.name}</h3>
+                                        {org.permissions?.includes(Permission.ORG_MANAGE) && (
+                                            <button
+                                                className="action-btn edit-btn"
+                                                onClick={(e) => handleRenameOrg(org, e)}
+                                                title={t("settings.organizations.rename")}
+                                            >
+                                                <Icon path={mdiPencil} size={0.7} />
+                                            </button>
+                                        )}
+                                    </div>
                                     {org.description && <p>{org.description}</p>}
                                 </div>
                             </div>
@@ -252,6 +271,9 @@ export const Organizations = () => {
 
             <OrganizationDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)}
                                 refreshOrganizations={fetchOrganizations} />
+
+            <OrganizationDialog open={renameDialogOpen} onClose={() => { setRenameDialogOpen(false); setRenameOrganization(null); }}
+                                refreshOrganizations={fetchOrganizations} organization={renameOrganization} />
 
             {selectedOrganization && (
                 <InviteMemberDialog open={inviteDialogOpen} onClose={() => setInviteDialogOpen(false)}
