@@ -16,6 +16,7 @@ import 'package:http/http.dart' as http;
 
 import '../../models/sftp_entry.dart';
 import '../../services/api_config.dart';
+import '../../services/connection_service.dart';
 import '../../services/session_manager.dart';
 import '../../utils/api_client.dart';
 import '../../utils/sftp_settings.dart';
@@ -66,6 +67,21 @@ class _SftpRendererState extends State<SftpRenderer> {
   bool _initialized = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 5;
+  int _aliveResets = 0;
+  static const int _maxAliveResets = 3;
+  int _pickerDepth = 0;
+  bool _reconnectActive = false;
+  bool _connectionLostWhilePicking = false;
+
+  bool get _pickerOpen => _pickerDepth > 0;
+
+  void _enterPicker() {
+    _pickerDepth++;
+  }
+
+  void _exitPicker() {
+    if (_pickerDepth > 0) _pickerDepth--;
+  }
 
   String get _sessionId => widget.session.sessionId;
 
@@ -118,6 +134,10 @@ class _SftpRendererState extends State<SftpRenderer> {
       widget.session.sftpSubscription = channel.stream.listen(
         _processMessage,
         onError: (error) {
+          if (_pickerOpen) {
+            _connectionLostWhilePicking = true;
+            return;
+          }
           if (mounted) {
             setState(() {
               _errorMessage = 'Connection error: $error';
@@ -128,6 +148,10 @@ class _SftpRendererState extends State<SftpRenderer> {
           _attemptReconnect();
         },
         onDone: () {
+          if (_pickerOpen) {
+            _connectionLostWhilePicking = true;
+            return;
+          }
           if (mounted) setState(() => _connected = false);
           widget.session.isConnected = false;
           _attemptReconnect();
@@ -142,35 +166,77 @@ class _SftpRendererState extends State<SftpRenderer> {
   }
 
   Future<void> _attemptReconnect() async {
-    if (!mounted || _reconnectAttempts >= _maxReconnectAttempts) {
-      widget.onDisconnected?.call();
-      return;
+    if (_reconnectActive) return;
+    _reconnectActive = true;
+    try {
+      while (mounted) {
+        if (_pickerOpen) {
+          _connectionLostWhilePicking = true;
+          return;
+        }
+        if (_reconnectAttempts >= _maxReconnectAttempts) {
+          final alive = await _serverSessionAlive();
+          if (!mounted) return;
+          if (_pickerOpen) {
+            _connectionLostWhilePicking = true;
+            return;
+          }
+          if (alive && _aliveResets < _maxAliveResets) {
+            _aliveResets++;
+            _reconnectAttempts = 0;
+          } else {
+            widget.onDisconnected?.call();
+            return;
+          }
+        }
+        _reconnectAttempts++;
+        final delay = Duration(seconds: _reconnectAttempts.clamp(1, 5));
+        await Future.delayed(delay);
+        if (!mounted) return;
+        if (_pickerOpen) {
+          _connectionLostWhilePicking = true;
+          return;
+        }
+        if (await _reconnectNow()) return;
+      }
+    } finally {
+      _reconnectActive = false;
     }
+  }
 
-    _reconnectAttempts++;
-    final delay = Duration(seconds: _reconnectAttempts.clamp(1, 5));
-    await Future.delayed(delay);
-
-    if (!mounted) return;
-
+  Future<bool> _reconnectNow() async {
     final success = await widget.sessionManager.reconnectSftpSession(
       token: widget.token,
       session: widget.session,
     );
+    if (!mounted || !success) return false;
+    _reconnectAttempts = 0;
+    _aliveResets = 0;
+    _initialized = false;
+    widget.session.sftpSubscription = null;
+    setState(() {
+      _errorMessage = null;
+      _loading = true;
+    });
+    _setupConnection();
+    return true;
+  }
 
-    if (!mounted) return;
-
-    if (success) {
-      _initialized = false;
-      widget.session.sftpSubscription = null;
-      setState(() {
-        _errorMessage = null;
-        _loading = true;
-      });
-      _setupConnection();
-    } else {
-      _attemptReconnect();
+  Future<bool> _serverSessionAlive() async {
+    try {
+      final sessions = await ConnectionService.listSessions(token: widget.token)
+          .timeout(const Duration(seconds: 10));
+      return sessions.any((s) => s['sessionId'] == _sessionId);
+    } catch (_) {
+      return true;
     }
+  }
+
+  Future<void> _recoverAfterPicker() async {
+    if (!mounted || _pickerOpen) return;
+    if (!_connectionLostWhilePicking) return;
+    _connectionLostWhilePicking = false;
+    _attemptReconnect();
   }
 
   void _processMessage(dynamic data) {
@@ -473,7 +539,17 @@ class _SftpRendererState extends State<SftpRenderer> {
   }
 
   Future<void> _uploadFile() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    _enterPicker();
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    } catch (_) {
+      result = null;
+    } finally {
+      _exitPicker();
+      await _recoverAfterPicker();
+    }
+    if (!mounted) return;
     if (result == null || result.files.isEmpty) return;
 
     setState(() => _uploading = true);
@@ -656,6 +732,7 @@ class _SftpRendererState extends State<SftpRenderer> {
   }
 
   Future<String?> _saveTempOnce(File temp, String suggestedName) async {
+    _enterPicker();
     try {
       return await FlutterFileDialog.saveFile(
         params: SaveFileDialogParams(
@@ -664,7 +741,9 @@ class _SftpRendererState extends State<SftpRenderer> {
         ),
       );
     } finally {
+      _exitPicker();
       await _deleteQuietly(temp);
+      await _recoverAfterPicker();
     }
   }
 

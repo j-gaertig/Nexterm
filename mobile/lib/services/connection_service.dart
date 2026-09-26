@@ -65,7 +65,7 @@ class ConnectionService {
       final List<dynamic> data = json.decode(response.body);
       return data.cast<Map<String, dynamic>>();
     }
-    return [];
+    throw Exception('Failed to list sessions: ${response.statusCode}');
   }
 
   static Future<void> hibernateSession({required String token, required String sessionId}) async {
