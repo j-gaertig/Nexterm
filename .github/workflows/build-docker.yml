@@ -7,6 +7,10 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-components:
     name: "Docker ${{ matrix.slug }} (${{ matrix.platform_arch }})"
@@ -24,10 +28,10 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
           - slug: server
-            image_name: nexterm/server
+            image_name: ghcr.io/j-gaertig/nexterm-server
             dockerfile: Dockerfile.server
           - slug: engine
-            image_name: nexterm/engine
+            image_name: ghcr.io/j-gaertig/nexterm-engine
             dockerfile: Dockerfile.engine
 
     steps:
@@ -39,11 +43,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to DockerHub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
@@ -86,9 +91,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: nexterm/server
+          - image: ghcr.io/j-gaertig/nexterm-server
             slug: server
-          - image: nexterm/engine
+          - image: ghcr.io/j-gaertig/nexterm-engine
             slug: engine
 
     steps:
@@ -102,11 +107,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to DockerHub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create manifest list and push
         run: |
@@ -138,17 +144,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to DockerHub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: nexterm/aio
+          images: ghcr.io/j-gaertig/nexterm-aio
 
       - name: Build and push by digest
         id: build
@@ -159,9 +166,9 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SERVER_IMAGE=nexterm/server:${{ inputs.version }}
-            ENGINE_IMAGE=nexterm/engine:${{ inputs.version }}
-          outputs: type=image,name=nexterm/aio,push-by-digest=true,name-canonical=true,push=true
+            SERVER_IMAGE=ghcr.io/j-gaertig/nexterm-server:${{ inputs.version }}
+            ENGINE_IMAGE=ghcr.io/j-gaertig/nexterm-engine:${{ inputs.version }}
+          outputs: type=image,name=ghcr.io/j-gaertig/nexterm-aio,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=aio-${{ matrix.platform_arch }}
           cache-to: type=gha,mode=max,scope=aio-${{ matrix.platform_arch }}
 
@@ -195,15 +202,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to DockerHub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create manifest list and push
         run: |
           docker buildx imagetools create \
-            -t nexterm/aio:latest \
-            -t nexterm/aio:${{ inputs.version }} \
-            $(printf 'nexterm/aio@sha256:%s ' $(ls "${{ runner.temp }}/digests/aio"))
+            -t ghcr.io/j-gaertig/nexterm-aio:latest \
+            -t ghcr.io/j-gaertig/nexterm-aio:${{ inputs.version }} \
+            $(printf 'ghcr.io/j-gaertig/nexterm-aio@sha256:%s ' $(ls "${{ runner.temp }}/digests/aio"))
