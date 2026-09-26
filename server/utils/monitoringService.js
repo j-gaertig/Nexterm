@@ -94,6 +94,17 @@ const COMMANDS = {
     ifaceDetails: IFACE_DETAIL_CMD,
 };
 
+const WINDOWS_COMMANDS = {
+    cpu: `powershell -NoProfile -Command "Get-WmiObject Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select-Object -ExpandProperty Average"`,
+    memory: `powershell -NoProfile -Command "$os = Get-WmiObject Win32_OperatingSystem; Write-Output ($os.TotalVisibleMemorySize * 1024); Write-Output ($os.FreePhysicalMemory * 1024)"`,
+    uptime: `powershell -NoProfile -Command "[int](((Get-Date) - (gcim Win32_OperatingSystem).LastBootUpTime).TotalSeconds)"`,
+    processCount: `powershell -NoProfile -Command "(Get-Process).Count"`,
+    disk: `powershell -NoProfile -Command "Get-WmiObject Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { Write-Output ($_.DeviceID + '|' + $_.Size + '|' + $_.FreeSpace + '|' + $_.FileSystem + '|' + $_.VolumeName) }"`,
+    processList: `powershell -NoProfile -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 50 | ForEach-Object { Write-Output ($_.UserName + '|' + $_.Id + '|' + [math]::Round($_.CPU,1) + '|' + [math]::Round($_.WorkingSet/1MB,1) + '|' + $_.ProcessName) }"`,
+    osInfo: `powershell -NoProfile -Command "$os = Get-WmiObject Win32_OperatingSystem; $cs = Get-WmiObject Win32_ComputerSystem; Write-Output ($os.Caption + '|' + $os.Version + '|' + $os.BuildNumber + '|' + $cs.DNSHostName + '|' + $cs.SystemType)"`,
+    network: `powershell -NoProfile -Command "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object { $s = Get-NetAdapterStatistics -Name $_.Name; $a = (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue | Where-Object {$_.AddressFamily -eq 'IPv4'} | Select-Object -First 1).IPAddress; Write-Output ($_.Name + '|' + $_.MacAddress + '|' + $_.LinkSpeed + '|' + $s.ReceivedBytes + '|' + $s.SentBytes + '|' + $a + '|' + $_.Status) }"`,
+};
+
 const collectServerData = async (entry, identity, credentials) => {
     if (!controlPlane.hasEngine()) {
         return { status: "error", timestamp: new Date(), errorMessage: "No engine connected. Monitoring requires the Nexterm Engine." };
@@ -109,37 +120,104 @@ const collectServerData = async (entry, identity, credentials) => {
     const jumpHosts = await resolveJumpHosts(entry);
 
     try {
-        const commands = Object.entries(COMMANDS).map(([id, command]) => ({ id, command }));
-        const batch = await controlPlane.execCommandBatch(host, port, params, commands, jumpHosts);
-        if (!batch.success) {
-            throw new Error(batch.errorMessage || "Failed to connect to SSH host");
+        const probe = await controlPlane.execCommandBatch(host, port, params, [
+            { id: "linux", command: "cat /proc/version" },
+            { id: "windows", command: `powershell -NoProfile -Command "(Get-WmiObject Win32_OperatingSystem).Caption"` },
+        ], jumpHosts);
+        if (!probe.success) throw new Error(probe.errorMessage || "Failed to connect to SSH host");
+
+        const probeOutput = Object.fromEntries((probe.results || []).map(r => [r.id, r.success ? (r.stdout || "").trim() : ""]));
+        if (probeOutput.linux) {
+            const batch = await controlPlane.execCommandBatch(host, port, params,
+                Object.entries(COMMANDS).map(([id, command]) => ({ id, command })), jumpHosts);
+            if (!batch.success) throw new Error(batch.errorMessage || "Failed to collect Linux metrics");
+
+            const out = Object.fromEntries((batch.results || []).map(r => [r.id, r.success ? (r.stdout || "").trim() : ""]));
+            const memory = parseMemoryUsage(out.memory);
+            return {
+                status: "online", timestamp: new Date(), cpuUsage: parseCPUUsage(out.cpu),
+                memoryUsage: memory.usage, memoryTotal: memory.total,
+                disk: parseDiskUsage(out.lsblk, out.df), uptime: parseUptime(out.uptime),
+                loadAverage: parseLoadAverage(out.loadAverage), processes: parseProcessCount(out.processCount),
+                processList: parseProcessList(out.processList),
+                osInfo: parseOSInfo(out.osRelease, out.kernel, out.arch, out.hostname),
+                network: parseNetworkInterfaces(out.ifaceDetails, out.ipAddr),
+            };
         }
 
-        const out = {};
-        for (const r of batch.results || []) {
-            out[r.id] = r.success ? (r.stdout || "").trim() : "";
+        if ((probeOutput.windows || "").toLowerCase().includes("windows")) {
+            const batch = await controlPlane.execCommandBatch(host, port, params,
+                Object.entries(WINDOWS_COMMANDS).map(([id, command]) => ({ id, command })), jumpHosts);
+            if (!batch.success) throw new Error(batch.errorMessage || "Failed to collect Windows metrics");
+
+            const out = Object.fromEntries((batch.results || []).map(r => [r.id, r.success ? (r.stdout || "").trim() : ""]));
+            const memory = parseWindowsMemoryUsage(out.memory);
+            return {
+                status: "online", timestamp: new Date(), cpuUsage: Number.isFinite(Number.parseFloat(out.cpu)) ? Math.round(Number.parseFloat(out.cpu)) : null,
+                memoryUsage: memory.usage, memoryTotal: memory.total,
+                disk: parseWindowsDiskUsage(out.disk), uptime: Number.parseInt(out.uptime, 10) || null,
+                loadAverage: null, processes: Number.parseInt(out.processCount, 10) || null,
+                processList: parseWindowsProcessList(out.processList), osInfo: parseWindowsOSInfo(out.osInfo),
+                network: parseWindowsNetworkInterfaces(out.network),
+            };
         }
 
-        const memory = parseMemoryUsage(out.memory);
-        return {
-            status: "online",
-            timestamp: new Date(),
-            cpuUsage: parseCPUUsage(out.cpu),
-            memoryUsage: memory.usage,
-            memoryTotal: memory.total,
-            disk: parseDiskUsage(out.lsblk, out.df),
-            uptime: parseUptime(out.uptime),
-            loadAverage: parseLoadAverage(out.loadAverage),
-            processes: parseProcessCount(out.processCount),
-            processList: parseProcessList(out.processList),
-            osInfo: parseOSInfo(out.osRelease, out.kernel, out.arch, out.hostname),
-            network: parseNetworkInterfaces(out.ifaceDetails, out.ipAddr),
-        };
+        return { status: "error", timestamp: new Date(), errorMessage: "Unknown OS, cannot collect metrics" };
     } catch (error) {
         logger.error("Error during monitoring data collection", { error: error.message, host });
         return { status: "offline", timestamp: new Date(), errorMessage: error.message };
     }
 };
+
+const parseWindowsMemoryUsage = (output) => {
+    const [total, free] = output.split(/\r?\n/).map(line => Number.parseInt(line.trim(), 10));
+    return Number.isFinite(total) && total > 0 && Number.isFinite(free)
+        ? { usage: Math.round(((total - free) / total) * 100), total }
+        : { usage: null, total: null };
+};
+
+const parseWindowsDiskUsage = (output) => output.split(/\r?\n/).filter(Boolean).map(line => {
+    const [device = "", size, free, fs, label] = line.trim().split("|");
+    const sizeBytes = Number.parseInt(size, 10) || 0;
+    const freeBytes = Number.parseInt(free, 10) || 0;
+    const used = sizeBytes - freeBytes;
+    return {
+        name: device.replace(":", ""), size: sizeBytes, model: label || null, serial: null, rotational: null,
+        partitions: [{
+            name: device, size: sizeBytes, mountPoint: device, type: fs || null, used,
+            available: freeBytes, usagePercent: sizeBytes > 0 ? Math.round((used / sizeBytes) * 100) : 0,
+        }],
+    };
+});
+
+const parseWindowsProcessList = (output) => output.split(/\r?\n/).filter(Boolean).map(line => {
+    const [user, pid, cpu, mem, ...name] = line.trim().split("|");
+    return {
+        user: user || "SYSTEM", pid: Number.parseInt(pid, 10) || 0,
+        cpu: Number.parseFloat(cpu) || 0, mem: Number.parseFloat(mem) || 0,
+        vsz: 0, rss: 0, tty: "?", stat: "?", start: "", time: "", command: name.join("|") || "",
+    };
+});
+
+const parseWindowsOSInfo = (output) => {
+    const [name, version, build, hostname, architecture] = output.split("|");
+    return { name: name || "Windows", version: version || "", kernel: build || "", hostname: hostname || "", architecture: architecture || "" };
+};
+
+const parseWindowsNetworkInterfaces = (output) => output.split(/\r?\n/).filter(Boolean).map(line => {
+    const [name, mac, speedText, rx, tx, ipv4, state] = line.trim().split("|");
+    const speedMatch = speedText?.match(/^([\d.]+)\s*(Gbps|Mbps|Kbps)?/i);
+    const speedValue = speedMatch ? Number.parseFloat(speedMatch[1]) : null;
+    const speedUnit = speedMatch?.[2]?.toLowerCase();
+    const speed = Number.isFinite(speedValue)
+        ? speedValue * (speedUnit === "gbps" ? 1000 : speedUnit === "kbps" ? 0.001 : 1)
+        : null;
+    return {
+        name: name || "", mac: mac || null, state: (state || "").toLowerCase().trim(), mtu: null,
+        speed, rxBytes: Number.parseInt(rx, 10) || 0, txBytes: Number.parseInt(tx, 10) || 0,
+        ipv4: ipv4 ? [ipv4] : [], ipv6: [],
+    };
+});
 
 const parseCPUUsage = (output) => {
     try {
