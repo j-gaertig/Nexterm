@@ -15,6 +15,12 @@
   </a>
 </p>
 
+## 🆕 Nexterm Neo
+
+Nexterm Neo is an unofficial community fork of [Nexterm](https://github.com/gnmyt/Nexterm), maintained by j-gaertig. AI tools assist with development; all changes are reviewed and maintained by j-gaertig.
+
+This independent project focuses on features and improvements that fit my needs. It is not affiliated with or endorsed by the official Nexterm project.
+
 ## 🤔 What is Nexterm?
 
 Nexterm is an open-source server management software that allows you to:
