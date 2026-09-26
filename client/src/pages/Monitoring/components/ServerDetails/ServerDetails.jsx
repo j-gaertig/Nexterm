@@ -66,6 +66,7 @@ export const ServerDetails = ({ server, activeTab = "overview", onTabChange }) =
     useEffect(() => { loadDetailData(); const i = setInterval(loadDetailData, 60000); return () => clearInterval(i); }, [loadDetailData]);
 
     const latest = useMemo(() => detailData?.latest || detailData?.data?.[0] || null, [detailData]);
+    const isWindows = latest?.osInfo?.platform === "windows";
     const validTab = tabs.some(t => t.id === activeTab) ? activeTab : "overview";
 
     const tabSwitcherTabs = useMemo(() => tabs.map(tab => ({
@@ -94,7 +95,7 @@ export const ServerDetails = ({ server, activeTab = "overview", onTabChange }) =
                     {validTab === "overview" && (isPVE ? <PVEOverviewTab latest={latest} t={t} formatBytes={formatBytes} formatUptime={formatUptime} /> : <OverviewTab latest={latest} t={t} formatBytes={formatBytes} formatUptime={formatUptime} />)}
                     {validTab === "charts" && <ChartsTab data={detailData?.data} t={t} isPVE={isPVE} />}
                     {validTab === "nodes" && isPVE && <NodesTab pveInfo={latest?.osInfo} t={t} formatBytes={formatBytes} formatUptime={formatUptime} />}
-                    {validTab === "storage" && !isPVE && <StorageTab disk={latest?.disk} t={t} formatBytes={formatBytes} />}
+                    {validTab === "storage" && !isPVE && <StorageTab disk={latest?.disk} isWindows={isWindows} t={t} formatBytes={formatBytes} />}
                     {validTab === "network" && !isPVE && <NetworkTab network={latest?.network} t={t} formatBytes={formatBytes} />}
                     {validTab === "processes" && !isPVE && <ProcessesTab processList={latest?.processList} />}
                 </div>
@@ -103,30 +104,33 @@ export const ServerDetails = ({ server, activeTab = "overview", onTabChange }) =
     );
 };
 
-const OverviewTab = ({ latest, t, formatBytes, formatUptime }) => (
-    <div className="overview-tab">
-        <div className="stats-grid">
-            <div className="stat-card">
-                <h3>{t("monitoring.details.overview.systemInfo.title")}</h3>
-                {latest?.osInfo ? (
-                    <div className="info-list">
-                        {["hostname", "name", "version", "kernel", "architecture"].map(k => <InfoItem key={k} label={t(`monitoring.details.overview.systemInfo.${k === "name" ? "os" : k}`)} value={latest.osInfo[k] || t("monitoring.details.overview.systemInfo.unknown")} />)}
-                        <InfoItem label={t("monitoring.details.overview.systemInfo.uptime")} value={formatUptime(latest.uptime, t)} />
+const OverviewTab = ({ latest, t, formatBytes, formatUptime }) => {
+    const isWindows = latest?.osInfo?.platform === "windows";
+    return (
+        <div className="overview-tab">
+            <div className="stats-grid">
+                <div className="stat-card">
+                    <h3>{t("monitoring.details.overview.systemInfo.title")}</h3>
+                    {latest?.osInfo ? (
+                        <div className="info-list">
+                            {["hostname", "name", "version", ...(isWindows ? [] : ["kernel"]), "architecture"].map(k => <InfoItem key={k} label={t(`monitoring.details.overview.systemInfo.${k === "name" ? "os" : k}`)} value={latest.osInfo[k] || t("monitoring.details.overview.systemInfo.unknown")} />)}
+                            <InfoItem label={t("monitoring.details.overview.systemInfo.uptime")} value={formatUptime(latest.uptime, t)} />
+                        </div>
+                    ) : <p className="no-data">{t("monitoring.details.overview.systemInfo.noData")}</p>}
+                </div>
+                <div className="stat-card">
+                    <h3>{t("monitoring.details.overview.performance.title")}</h3>
+                    <div className="metrics-grid">
+                        <MetricItem label={t("monitoring.details.overview.performance.cpuUsage")} value={latest?.cpuUsage != null ? `${latest.cpuUsage}%` : "N/A"} />
+                        <MetricItem label={t("monitoring.details.overview.performance.memoryUsage")} value={latest?.memoryUsage != null ? `${latest.memoryUsage}%` : "N/A"} detail={latest?.memoryTotal ? t("monitoring.details.overview.performance.total", { value: formatBytes(latest.memoryTotal) }) : null} />
+                        {!isWindows && <MetricItem label={t("monitoring.details.overview.performance.loadAverage")} value={latest?.loadAverage?.[0]?.toFixed(2) || "N/A"} detail={latest?.loadAverage?.length >= 3 ? t("monitoring.details.overview.performance.loadDetail", { fiveMin: latest.loadAverage[1].toFixed(2), fifteenMin: latest.loadAverage[2].toFixed(2) }) : null} />}
+                        <MetricItem label={t("monitoring.details.overview.performance.processes")} value={latest?.processes ?? "N/A"} />
                     </div>
-                ) : <p className="no-data">{t("monitoring.details.overview.systemInfo.noData")}</p>}
-            </div>
-            <div className="stat-card">
-                <h3>{t("monitoring.details.overview.performance.title")}</h3>
-                <div className="metrics-grid">
-                    <MetricItem label={t("monitoring.details.overview.performance.cpuUsage")} value={latest?.cpuUsage != null ? `${latest.cpuUsage}%` : "N/A"} />
-                    <MetricItem label={t("monitoring.details.overview.performance.memoryUsage")} value={latest?.memoryUsage != null ? `${latest.memoryUsage}%` : "N/A"} detail={latest?.memoryTotal ? t("monitoring.details.overview.performance.total", { value: formatBytes(latest.memoryTotal) }) : null} />
-                    <MetricItem label={t("monitoring.details.overview.performance.loadAverage")} value={latest?.loadAverage?.[0]?.toFixed(2) || "N/A"} detail={latest?.loadAverage?.length >= 3 ? t("monitoring.details.overview.performance.loadDetail", { fiveMin: latest.loadAverage[1].toFixed(2), fifteenMin: latest.loadAverage[2].toFixed(2) }) : null} />
-                    <MetricItem label={t("monitoring.details.overview.performance.processes")} value={latest?.processes ?? "N/A"} />
                 </div>
             </div>
         </div>
-    </div>
-);
+    );
+};
 
 const PVEOverviewTab = ({ latest, t, formatBytes, formatUptime }) => {
     const p = latest?.osInfo;
@@ -202,7 +206,7 @@ const ChartsTab = ({ data, t, isPVE }) => (
     </div>
 );
 
-const StorageTab = ({ disk, t, formatBytes }) => (
+const StorageTab = ({ disk, isWindows, t, formatBytes }) => (
     <div className="storage-tab">
         {disk?.length > 0 ? (
             <div className="disk-list">
@@ -210,9 +214,9 @@ const StorageTab = ({ disk, t, formatBytes }) => (
                     <div key={i} className="stat-card full-width disk-card">
                         <div className="disk-header">
                             <div className="disk-info">
-                                <span className="disk-name">/dev/{d.name}</span>
+                                <span className="disk-name">{isWindows ? d.name : `/dev/${d.name}`}</span>
                                 {d.model && <span className="disk-model">{d.model}</span>}
-                                <span className={`disk-type ${d.rotational ? "hdd" : "ssd"}`}>{d.rotational ? "HDD" : "SSD"}</span>
+                                {d.rotational != null && <span className={`disk-type ${d.rotational ? "hdd" : "ssd"}`}>{d.rotational ? "HDD" : "SSD"}</span>}
                             </div>
                             <span className="disk-size">{formatBytes(d.size)}</span>
                         </div>

@@ -9,6 +9,7 @@ const { getIdentityCredentials } = require("../controllers/identity");
 const { getMonitoringSettingsInternal } = require("../controllers/monitoring");
 const controlPlane = require("../lib/controlPlane/ControlPlaneServer");
 const { buildSSHParams, resolveJumpHosts } = require("../lib/ConnectionService");
+const { buildWindowsMonitoringCommand, isWindowsProbeResult, isPowerShellProbeResult, parseWindowsMonitoringOutput } = require("./windowsMonitoring");
 
 let monitoringInterval = null;
 let isRunning = false;
@@ -109,6 +110,17 @@ const collectServerData = async (entry, identity, credentials) => {
     const jumpHosts = await resolveJumpHosts(entry);
 
     try {
+        const platformProbe = await controlPlane.execCommand(host, port, params, "cmd /c echo NEXTERM_WINDOWS", jumpHosts);
+        if (isWindowsProbeResult(platformProbe)) {
+            const shellProbe = await controlPlane.execCommand(host, port, params, "Write-Output NEXTERM_POWERSHELL", jumpHosts);
+            const shell = isPowerShellProbeResult(shellProbe) ? "powershell" : "cmd";
+            const windowsResult = await controlPlane.execCommand(host, port, params, buildWindowsMonitoringCommand(shell), jumpHosts);
+            if (!windowsResult.success || windowsResult.exitCode !== 0) {
+                throw new Error(windowsResult.errorMessage || windowsResult.stderr?.trim() || "Failed to collect Windows monitoring data");
+            }
+            return parseWindowsMonitoringOutput(windowsResult.stdout);
+        }
+
         const commands = Object.entries(COMMANDS).map(([id, command]) => ({ id, command }));
         const batch = await controlPlane.execCommandBatch(host, port, params, commands, jumpHosts);
         if (!batch.success) {
