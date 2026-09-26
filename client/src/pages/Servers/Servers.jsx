@@ -29,6 +29,15 @@ const makeReconnectKey = () => {
     return `rk-${Array.from(values, value => value.toString(36)).join("-")}`;
 };
 
+const upsertSession = (sessions, session) => {
+    const index = sessions.findIndex(current => current.id === session.id);
+    if (index === -1) return [...sessions, session];
+
+    const next = [...sessions];
+    next[index] = { ...sessions[index], ...session };
+    return next;
+};
+
 export const Servers = () => {
 
     const [serverDialogOpen, setServerDialogOpen] = useState(false);
@@ -62,6 +71,12 @@ export const Servers = () => {
     const pendingConnectionsRef = useRef(new Map());
     const cancelledPendingRef = useRef(new Set());
     const autoReconnectRef = useRef(null);
+    const activeSessionsRef = useRef(activeSessions);
+    const reconnectingKeysRef = useRef(new Set());
+
+    useEffect(() => {
+        activeSessionsRef.current = activeSessions;
+    }, [activeSessions]);
 
     const markSessionErrored = useCallback((sessionId, message) => {
         if (erroredSessionsRef.current.has(sessionId)) return;
@@ -92,6 +107,7 @@ export const Servers = () => {
             if (!server) return null;
             return {
                 id: session.sessionId,
+                connectionGeneration: session.connectionGeneration ?? 0,
                 server,
                 identity: session.configuration.identityId,
                 isHibernated: session.isHibernated,
@@ -128,7 +144,7 @@ export const Servers = () => {
                 const existing = prevMap.get(newSession.id);
                 const reconnectKey = existing?.reconnectKey || makeReconnectKey();
                 return existing
-                    ? { ...newSession, reconnectKey, scriptId: existing.scriptId || newSession.scriptId, scriptName: existing.scriptName, osName: newSession.osName || existing.osName }
+                    ? { ...newSession, reconnectKey, connectionVersion: existing.connectionVersion || 0, scriptId: existing.scriptId || newSession.scriptId, scriptName: existing.scriptName, osName: newSession.osName || existing.osName }
                     : { ...newSession, reconnectKey };
             });
             const mergedIds = new Set(merged.map(s => s.id));
@@ -242,7 +258,7 @@ export const Servers = () => {
     };
 
     const performConnection = async (options, connectionReason = null) => {
-        const { server, identity = null, type = null, directIdentity = null, scriptId = null, scriptName = null, placement = null, replaceSessionId = null } = options;
+        const { server, identity = null, type = null, directIdentity = null, scriptId = null, scriptName = null, placement = null, reconnectSessionId = null, reconnectKey: existingReconnectKey = null } = options;
         const identityKey = identity?.id ?? (directIdentity
             ? `${directIdentity.username || ""}:${directIdentity.type || ""}`
             : null);
@@ -252,26 +268,29 @@ export const Servers = () => {
             type || server.renderer || null,
             scriptId ?? null,
         ]);
-        const existingPendingId = pendingConnectionsRef.current.get(pendingKey);
-        if (existingPendingId) {
-            setActiveSessionId(existingPendingId);
-            return true;
+        let pendingId = null;
+        if (!reconnectSessionId) {
+            const existingPendingId = pendingConnectionsRef.current.get(pendingKey);
+            if (existingPendingId) {
+                setActiveSessionId(existingPendingId);
+                return true;
+            }
+
+            pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            pendingConnectionsRef.current.set(pendingKey, pendingId);
+            setActiveSessions(prev => [...prev, {
+                id: pendingId,
+                server,
+                identity: identity?.id,
+                type: type || undefined,
+                isPendingConnection: true,
+                pendingKey,
+            }]);
+            sessionLayout.placeSession(pendingId, placement);
+            setActiveSessionId(pendingId);
         }
-
-        const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        pendingConnectionsRef.current.set(pendingKey, pendingId);
-        setActiveSessions(prev => [...prev, {
-            id: pendingId,
-            server,
-            identity: identity?.id,
-            type: type || undefined,
-            isPendingConnection: true,
-            pendingKey,
-        }]);
-        sessionLayout.placeSession(pendingId, placement);
-        setActiveSessionId(pendingId);
-
         try {
+            const existingSession = activeSessionsRef.current.find(s => s.id === reconnectSessionId);
             const payload = {
                 entryId: server.id,
                 identityId: identity?.id,
@@ -280,13 +299,15 @@ export const Servers = () => {
                 tabId: getTabId(),
                 browserId: getBrowserId(),
                 displayDpi: Math.round((window.devicePixelRatio || 1) * 96),
+                ...(reconnectSessionId && { connectionGeneration: existingSession?.connectionGeneration ?? 0 }),
             };
 
             if (directIdentity) payload.directIdentity = directIdentity;
             if (scriptId) payload.scriptId = scriptId;
-            const session = await postRequest("/connections", payload);
+            const endpoint = reconnectSessionId ? `/connections/${reconnectSessionId}/reconnect` : "/connections";
+            const session = await postRequest(endpoint, payload);
 
-            if (cancelledPendingRef.current.delete(pendingId)) {
+            if (pendingId && cancelledPendingRef.current.delete(pendingId)) {
                 deleteRequest(`/connections/${session.sessionId}`).catch(error => {
                     console.debug("Cancelled session deletion request failed:", error);
                 });
@@ -296,9 +317,7 @@ export const Servers = () => {
             const organization = findOrganizationForServer(server.id, servers);
             const organizationId = organization ? parseInt(organization.id.split("-")[1]) : null;
 
-            const reconnectKey = (replaceSessionId
-                ? activeSessions.find(s => s.id === replaceSessionId)?.reconnectKey
-                : null) || makeReconnectKey();
+            const reconnectKey = existingReconnectKey || existingSession?.reconnectKey || makeReconnectKey();
 
             const sessionData = {
                 server,
@@ -310,24 +329,15 @@ export const Servers = () => {
                 scriptId: scriptId || undefined,
                 scriptName: scriptName || undefined,
                 reconnectKey,
+                connectionGeneration: session.connectionGeneration ?? 0,
+                connectionVersion: reconnectSessionId ? (existingSession?.connectionVersion || 0) + 1 : 0,
             };
 
-            sessionLayout.replaceSession(pendingId, session.sessionId);
-            if (replaceSessionId) {
-                closingSessionsRef.current.add(replaceSessionId);
-                erroredSessionsRef.current.delete(replaceSessionId);
-                deleteRequest(`/connections/${replaceSessionId}`).catch(error => {
-                    console.debug("Old session deletion request failed:", error);
-                });
-                setActiveSessions(prevSessions => {
-                    const withoutOldSession = prevSessions.filter(s => s.id !== replaceSessionId);
-                    const pendingIndex = withoutOldSession.findIndex(s => s.id === pendingId);
-                    if (pendingIndex === -1) return [...withoutOldSession, sessionData];
-                    const next = [...withoutOldSession];
-                    next.splice(pendingIndex, 1, sessionData);
-                    return next;
-                });
+            if (reconnectSessionId) {
+                erroredSessionsRef.current.delete(reconnectSessionId);
+                setActiveSessions(prevSessions => upsertSession(prevSessions, sessionData));
             } else {
+                sessionLayout.replaceSession(pendingId, session.sessionId);
                 setActiveSessions(prevSessions => {
                     const pendingIndex = prevSessions.findIndex(s => s.id === pendingId);
                     if (pendingIndex === -1) return [...prevSessions, sessionData];
@@ -339,16 +349,18 @@ export const Servers = () => {
             setActiveSessionId(session.sessionId);
             return true;
         } catch (error) {
-            cancelledPendingRef.current.delete(pendingId);
-            setActiveSessions(prev => {
-                const remaining = prev.filter(s => s.id !== pendingId);
-                setActiveSessionId(current => current === pendingId ? remaining.at(-1)?.id || null : current);
-                return remaining;
-            });
-            console.error("Failed to create session", error);
+            if (pendingId) {
+                cancelledPendingRef.current.delete(pendingId);
+                setActiveSessions(prev => {
+                    const remaining = prev.filter(s => s.id !== pendingId);
+                    setActiveSessionId(current => current === pendingId ? remaining.at(-1)?.id || null : current);
+                    return remaining;
+                });
+            }
+            console.error(reconnectSessionId ? "Failed to reconnect session" : "Failed to create session", error);
             return false;
         } finally {
-            if (pendingConnectionsRef.current.get(pendingKey) === pendingId) {
+            if (pendingId && pendingConnectionsRef.current.get(pendingKey) === pendingId) {
                 pendingConnectionsRef.current.delete(pendingKey);
             }
         }
@@ -438,17 +450,25 @@ export const Servers = () => {
     };
 
     const reconnectSession = async (sessionId) => {
-        const session = activeSessions.find(s => s.id === sessionId);
-        if (!session || session.type === "notes" || session.isJoined) return { connected: false, deferred: true };
+        const session = activeSessionsRef.current.find(s => s.id === sessionId);
+        if (!session || session.type === "notes" || session.isJoined || reconnectingKeysRef.current.has(session.reconnectKey)) {
+            return { connected: false, deferred: true };
+        }
 
-        return await initiateConnection({
-            server: session.server,
-            identity: session.identity ? { id: session.identity } : null,
-            type: session.type ?? null,
-            scriptId: session.scriptId ?? null,
-            scriptName: session.scriptName ?? null,
-            replaceSessionId: sessionId,
-        });
+        reconnectingKeysRef.current.add(session.reconnectKey);
+        try {
+            return await initiateConnection({
+                server: session.server,
+                identity: session.identity ? { id: session.identity } : null,
+                type: session.type ?? null,
+                scriptId: session.scriptId ?? null,
+                scriptName: session.scriptName ?? null,
+                reconnectSessionId: sessionId,
+                reconnectKey: session.reconnectKey,
+            });
+        } finally {
+            reconnectingKeysRef.current.delete(session.reconnectKey);
+        }
     };
 
     const autoReconnectApi = useAutoReconnect({
@@ -512,7 +532,7 @@ export const Servers = () => {
                         shareId: null,
                         shareWritable: false,
                     };
-                    setActiveSessions(prevSessions => [...prevSessions, sessionData]);
+                    setActiveSessions(prevSessions => upsertSession(prevSessions, sessionData));
                     setActiveSessionId(result.sessionId);
                 }
             }
@@ -549,7 +569,7 @@ export const Servers = () => {
                 organizationName: originalSession.organizationName,
             };
 
-            setActiveSessions(prevSessions => [...prevSessions, sessionData]);
+            setActiveSessions(prevSessions => upsertSession(prevSessions, sessionData));
             setActiveSessionId(session.sessionId);
         } catch (error) {
             console.error("Failed to open terminal from file manager", error);

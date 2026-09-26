@@ -352,12 +352,14 @@ export const ViewContainer = ({
             return <PendingSession />;
         }
 
+        const rendererKey = `${session.id}-${session.connectionVersion || 0}`;
         if (session.type === "notes") {
-            return <NotesRenderer session={session} />;
+            return <NotesRenderer key={rendererKey} session={session} />;
         }
 
         if (session.scriptId) {
             return <ScriptRenderer
+                key={rendererKey}
                 session={session}
                 disconnectFromServer={disconnectFromServer}
                 reconnectSession={reconnectSession}
@@ -372,7 +374,7 @@ export const ViewContainer = ({
 
         switch (renderer) {
             case "guac":
-                return <GuacamoleRenderer session={session} disconnectFromServer={disconnectFromServer}
+                return <GuacamoleRenderer key={rendererKey} session={session} disconnectFromServer={disconnectFromServer}
                                           reconnectSession={reconnectSession}
                                           reconnectNow={reconnectNow}
                                           markSessionConnected={markSessionConnected}
@@ -384,7 +386,7 @@ export const ViewContainer = ({
                                           isShared={!!session.isJoined}
                                           onFullscreenToggle={toggleFullscreenMode} />;
             case "web":
-                return <BrowserRenderer session={session} disconnectFromServer={disconnectFromServer}
+                return <BrowserRenderer key={rendererKey} session={session} disconnectFromServer={disconnectFromServer}
                                         onPageInfo={(info) => updatePageInfo(session.id, info)}
                                         markSessionErrored={markSessionErrored}
                                         getSessionError={getSessionError}
@@ -393,7 +395,7 @@ export const ViewContainer = ({
                                         fullscreenEnabled={fullscreenMode}
                                         onFullscreenToggle={toggleFullscreenMode} />;
             case "terminal":
-                return <XtermRenderer session={session} disconnectFromServer={disconnectFromServer}
+                return <XtermRenderer key={rendererKey} session={session} disconnectFromServer={disconnectFromServer}
                                       reconnectSession={reconnectSession}
                                       reconnectNow={reconnectNow}
                                       markSessionConnected={markSessionConnected}
@@ -406,7 +408,7 @@ export const ViewContainer = ({
                                       layoutMode={layoutMode} onBroadcastToggle={toggleBroadcastMode}
                                       onFullscreenToggle={toggleFullscreenMode} />;
             case "sftp":
-                return <FileRenderer session={session} disconnectFromServer={disconnectFromServer}
+                return <FileRenderer key={rendererKey} session={session} disconnectFromServer={disconnectFromServer}
                                      setOpenFileEditors={setOpenFileEditors} isActive={session.id === activeSessionId}
                                      onOpenTerminal={(path) => openTerminalFromFileManager?.(session.id, path)} />;
             default:
